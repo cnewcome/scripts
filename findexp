@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#ls -ltr /home/support/ingested/links | awk '{print $11}' | cut -c29-200 > /tmp/indexlist.txt
+ls -ltr /home/support/ingested/links | awk '{print $10,$11}'| cut -c3-200 | sed s#//*#/#g > /tmp/indexlist.txt
+
+
+    cat /tmp/indexlist.txt | grep $1
+
+printf "\nEnd of list\n"

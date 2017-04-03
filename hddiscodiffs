@@ -1,0 +1,19 @@
+#!/bin/bash
+#Aaron Knodel
+
+if [[ ! -z $1 ]] && [[ $# -ne 2 ]]; then
+	count=0
+	path=$(ls -d ~/ingested/201[6-9]*/*$1* | egrep -v '.tar|.gz')
+	for i in $path; do
+		count=$(expr $count + 1)
+		echo $i | grep -o "collector.*"
+        	cat $i/disk/hddisco.out | grep = > /tmp/hddisco-$1-$count.txt
+		if [[ $count -ne 1 ]]; then
+			diff /tmp/hddisco-$1-$count.txt /tmp/hddisco-$1-$(expr $count - 1).txt
+		fi
+	done
+	for i in $(ls /tmp | grep ^hddisco-); do rm /tmp/$i; done
+else
+        echo "You must supply an argument, such as a Machine ID"
+	echo "This script will do diffs of the collectors available for a given machine id on hddisco WWN output so you can find when changes happened."
+fi

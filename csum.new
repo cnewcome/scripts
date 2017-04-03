@@ -1,0 +1,3 @@
+#!/bin/bash
+
+csummary.newcomer long | tee csummary.out

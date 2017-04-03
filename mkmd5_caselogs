@@ -1,0 +1,15 @@
+#!/bin/bash
+
+cd ~/upload/caselogs
+for i in *.gz;do 
+   if [[ -s $i ]]; then
+      if [[ ! -e $i.md5 ]]; then 
+         mkmd5 $i
+      fi
+   else
+      mv $i maybe-broken
+      if [[ -e $i.md5 ]]; then
+         rm $i.md5
+      fi
+   fi
+done

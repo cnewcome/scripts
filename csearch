@@ -1,0 +1,23 @@
+#!/bin/bash
+
+if test $# -eq 1; then
+   if test $1 -gt 60000 && test $1 -lt 200000; then
+      DIRN=$(ls -1d ~/upload/*${1} 2> /dev/null | wc -l)
+      if test $DIRN -eq 1; then
+         DIRS=$(ls -1d ~/upload/*${1})
+         if [ -n $DIRS ]; then
+            echo $DIRS
+            cd $DIRS && bash
+         fi
+      elif test $DIRN -gt 1; then
+         echo "Multiple directories with that case id:"
+         ls -1d ~/upload/*${1}
+      else
+         echo "$1: not found"
+      fi
+   else
+      echo "Invalid input: $1"
+   fi
+else
+   echo "Please only pass 1 parameter: $*"
+fi

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+force_run=""
+#force_run="-force"
+long_run=""
+usage="$(basename $0) -force -long -h"
+
+for arg in "$@"; do
+   case $arg in
+       --force|-force|force)
+           force_run="-force"
+       ;;
+       --long|-long|long)
+           long_run="-long"
+       ;;
+       *)
+           echo $usage
+       ;;
+   esac
+done
+csummary $force_run $long_run | tee csummary.out

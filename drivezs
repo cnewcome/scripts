@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+	echo "Enter a WWN to look at drives in zpool status. No WWN's were provided."
+else
+	grepfor="DONOTFINDMEEVER"
+	while  (( "$#" )); do
+		grepfor="$grepfor|$1"
+		shift
+	done
+	cat zfs/zpool-status-dv.out | egrep -i --color -B500 -A500 $grepfor
+fi

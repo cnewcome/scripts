@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if test $# -eq 0; then
+    CSEARCH=$(pwd | awk -F/ '{print $6}' | awk -F- '{print $4}')
+else
+    CSEARCH=$1
+fi
+COL=$(listcol -c=$CSEARCH|head -1)
+HOSTNAME=$(echo $COL|awk -F_ '{print $2}')
+LICENSE=$(echo $COL|sed -e 's/.*collector-\(.*\)_.*/\1/'|cut -c1-32)
+DATE=$(echo $COL|awk -F_ '{print $3}'|sed -s 's/\./ /')
+echo $HOSTNAME
+echo $LICENSE
+echo $DATE
+grep version ${COL}/collector.stats

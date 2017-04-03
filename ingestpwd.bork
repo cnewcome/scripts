@@ -1,0 +1,29 @@
+#!/bin/bash
+# Benjamin Hodgens 4/2014
+# uses ~/bin{cpwd,
+count=0
+#tmp
+ls collector*.tar.gz
+echo "Ingesting to..."
+for cfile in $(ls collector*.tar.gz); do
+    count=$(($count+1))
+    echo $count
+    dir=$(echo $cfile | sed 's/T\.[0-9].*$/T/')
+    dirname[$count]=$dir 
+    md5sum $i > $cfile.md5
+    mv $cfile ~/upload/caselogs/
+    mv $cfile.md5 ~/upload/caselogs/
+    cpath=$(cpwd $cfile path)
+    echo " $i"
+done
+echo ""
+echo -n "Please wait file the files are ingested."
+exit;
+# fix this shit
+while true; do
+    sleep 4
+    if [[ -d $cpath ]]; then
+        echo "Files ingested. Done."
+        exit
+    fi
+done

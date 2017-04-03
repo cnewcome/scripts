@@ -1,0 +1,34 @@
+#!/bin/bash
+. ~/bin/grepp.sh
+echo $1
+if [[ -z "$1" ]]; then
+    echo "Specify the string, or a substring of, the error type you want to determine paths on. Eg:"
+    echo "$0 ereport.io.scsi.cmd.disk.tran"
+    echo "$0 slow-io"
+fi
+#for i in $(csummary | grepp $1 | grep device | cut -f 2 -d w | cut -f 1 -d ,); do
+#    grep -B300 $i enclosures/for-enclosure-in-sesctl-list-grep-v-enclosure_id-awk-print-1-do-echo-enclosure-sesctl-target_port-enclosure-done.out | egrep "^[A-Z]|$i" | tail -n2 
+#done
+echo --
+for a in $(for i in $(cat csummary.out | grepp $1 | grep device | cut -f 2 -d "@" | cut -f 1 -d , | sed -e s/e// | sed -e s/w// | sed -e s/g// ); do 
+    grep -B20 $i disk/hddisco.out | egrep = | sed -e s/=//; done); do 
+        grep -B120 $a enclosures/nmc-c-show-jbod-all.out | egrep "$a|^name|alias"; 
+done
+
+#echo --
+#echo "via show jbod all:"
+#for a in $(for i in $(csummary | grepp $1 | cut -f 2 -d g); do grep -B20 $i disk/hddisco.out | grep "=" | sed -e s/=// | tail -n 1 ; done); do grep -B100 $a enclosures/nmc-c-show-jbod-all.out | egrep "$a|jbod" | tail -n2 ; done
+
+echo --
+echo "take 2:"
+
+#slowio only?
+#for a in $(for i in $(csummary | grepp $1 | cut -f 2 -d g); do grep -B20 $i disk/hddisco.out | grep "=" | sed -e s/=// | tail -n 1 ; done); do grep -B100 $a enclosures/nmc-c-show-jbod-all.out | egrep "$a|jbod" | tail -n2 ; done
+
+echo "" 
+echo "from zpool:"
+for a in $(for i in $(csummary | grepp $1 | grep device | cut -f 2 -d "@" | sed -e s/g//); do echo $i; grep -B20 $i disk/hddisco.out | grep = | tail -n 1 | sed -e s/=//; done); do grep -B20 $a zfs/zpool-status-dv.out | egrep "$a|raid|spares|cache|log|mirror" | tail -n2; done
+
+# another method still, because differences in slotmap etc; 
+
+for i in $(less zfs/zpool-status-dv.out | grep DEGRADED | grep -v mirror | grep c0 | awk {'print $1'}); do grep $i enclosures/nmc-c-show-lun-slotmap.out ; done

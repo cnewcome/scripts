@@ -1,0 +1,4 @@
+#!/bin/bash
+
+grep "STATUS" nexenta-autosac-*.txt | sort | uniq -c
+

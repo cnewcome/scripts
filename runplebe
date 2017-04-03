@@ -1,0 +1,4 @@
+#!/bin/bash
+
+POOL=$(ls -1 zfstxg_*.out)
+plebe $POOL | tee plebe.out

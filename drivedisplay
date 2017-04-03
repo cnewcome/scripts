@@ -1,0 +1,11 @@
+#!/bin/bash
+while IFS= read line
+do
+	printf "$line\n"
+	if [[ $line == *c*t*d* ]]; then
+		TOQUERY=$(echo $line | awk '{print $1}')
+		echo -e '\t   ' $(cat disk/hddisco.out | grep $TOQUERY -A25 | egrep 'vendor|size_str|product|revision' | awk '{print $2 " "}')\
+		 $(cat enclosures/nmc-c-show-lun-slotmap.out 2>&- | grep $TOQUERY | grep -o "`cat enclosures/nmc-c-show-lun-slotmap.out 2>&- | grep JBOD -A1 | tail -1 | awk '{print $2}' | cut -d: -f1`.*"\
+		 | awk '{print $1 " slot:" $2}')
+	fi
+done < zfs/zpool-status-dv.out

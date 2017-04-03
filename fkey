@@ -1,0 +1,32 @@
+#!/bin/bash
+
+#
+# Rick Mesta
+# 04/07/2016
+#  
+# Bundle all json files for all collectors w/given license key
+#
+function findkey()
+{
+    KEY=$1
+    TARD=$2
+    IDIR=/mnt/carbon-steel/ingested
+    cd ${IDIR}
+    LST=`find ./2016-0* -maxdepth 1 -name "*${KEY}*"`
+    for i in ${LST}; do
+        find ${i} -name *.json | cpio -pdumv ${TARD}
+    done
+    RESD=`dirname ${TARD}`
+    OUTFILE="${RESD}/${KEY}.tar.bz2"
+    tar cfp - ${TARD} | bzip2 -9 > ${OUTFILE}
+    if [ $? -eq 0 ]; then
+        rm -rf ${TARD}
+    fi
+    echo -e "Output in \e[1;33m${OUTFILE}\e[0m"
+    cd -
+}
+
+#
+# usage: fkey LICENSE_KEY /output/dir/path
+#
+findkey $*

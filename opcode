@@ -1,0 +1,5 @@
+#!/bin/bash
+
+
+egrep -i "op-code|device-path|driver-assessment" $1 | sort | uniq -c
+

@@ -1,0 +1,24 @@
+#!/bin/bash
+# WritTen by Chris Newcomer modified by Benjamin Hodgens, and stolen to make user friendly by David Steed
+# goes to Collector path or outputs collector's path
+# used by 'ingestpwd'
+if [[ ! -z $1 ]]; then
+    cdate=$(echo $1 | awk -F_ '{print $3}' | sed -e 's/\(20[0-9]\{2\}-[0-1][0-9]-[0-3][0-9]\).*/\1/')
+    #echo "cdate=$cdate"
+    hname=$(echo $1 | awk -F_ '{print $2}')
+    #echo "hname=$hname"
+    if [[ ! -z $2 ]]; then
+        # if second variable, just output path 
+        echo "~/ingested/${cdate}/${1}"
+    else
+        cd ~/ingested/${cdate}/*${1}*/ >/dev/null 2>&1
+        if [[ $? != 0 ]]; then   
+            echo "Nope, this does not look like a good/complete collector name"
+        else
+        echo "Changing directory to: ~/ingested/${cdate}/$1"
+            cd ~/ingested/${cdate}/*${1}* && bash
+            #   paf=$(echo "~/ingested/${cdate}/*$1*" | sed 's/.....tar.gz$//')  
+            #cd $paf && bash
+        fi
+    fi
+fi

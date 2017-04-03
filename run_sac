@@ -1,0 +1,3 @@
+#!/bin/bash
+
+nxcat.py --path=. --sac | tee nxcat-sac.out

@@ -1,0 +1,1 @@
+cd /home/support/ingested/$(date  +%Y-%m-%d) && bash

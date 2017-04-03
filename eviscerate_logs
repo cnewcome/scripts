@@ -1,0 +1,86 @@
+#!/bin/bash
+# Benjamin Hodgens
+# 2016-10-28
+# converts and merges RSF and messages files to be of a consistent time format and sequence
+# TODO add some sort of logical tests/syntax highlighting - for instance, like RSF version change checks? 
+# TODO make it possible to select a time range to look at - likely "from datetime forward" to not have to process all messages and rsfmon.log
+time_offset=86400 # 1 day in seconds 
+my_time=$(date +%s)
+my_human_time=$(date +%Y-%m-%d)
+orig_pwd=$(pwd)
+outfile="$orig_pwd/eviscerated_logs.$my_human_time"
+usage="Usage: $0 [-h|-o=outfile] <collector paths, space separated>"
+starttime=`date +%s`
+echo "Starting path: $orig_pwd"
+echo "Start time: $(date)"
+if [ "$#" == "0" ]; then
+    echo "$usage"
+    exit
+fi
+for arg in "$@"; do
+    case $arg in 
+        -o=*)
+            outfile="${arg#*=}"
+            echo "Final results will be at: $outfile"
+            shift
+            ;;
+        -d=*)
+            # approximate date of outage
+            # TODO something with this
+            outage_date=$(date --date="${arg#*=}" +%s)
+            shift
+            ;;
+        -h|-help)
+            echo "Convert RSF-1 and system messages to be of a consistent time format and sequence."
+            exit
+            ;;
+        *)
+            if [[ ! -d $arg && ! -f "$arg/collector.stats" ]]; then
+                echo $usage
+                echo "Doesn't appear to be a Collector, skipping: $arg"
+                shift
+            fi
+            col=$arg
+            my_hostname=$(grep ^Host $col/collector.stats | awk '{print $2}' | sed 's/.*/\L&/' )
+            my_out="$outfile.$my_hostname.scratch"
+            echo "temporary out file: $my_out"
+	    if [[ ! -d "$col/plugins/opt/HAC/RSF-1/log" ]] ; then  
+                echo "RSF directory not yet extrated..."
+	        if [[ -f "$col/plugins/tar-czf-opthac.tar.gz" ]]; then
+	            echo "Extracting RSF..."
+                    cd $col/plugins 
+	            tar -xzf "tar-czf-opthac.tar.gz"
+                    cd $orig_pwd
+                    echo "Extracted."
+	        else 
+                    echo "There is no RSF tarball under $col!"
+                fi
+            fi
+            if [[ -e $my_out ]]; then
+                rm $my_out
+            fi
+	    if [[ -f "$col/plugins/opt/HAC/RSF-1/log/rsfmon.log" ]]; then
+	        echo "tsconv for $my_hostname RSF rsfmon.log..."
+                # TODO date logic
+                time cat $col/plugins/opt/HAC/RSF-1/log/rsfmon.log* | tsconv -rsf | sed -e "s/ / $my_hostname /" >> $my_out
+	    else
+                echo "Problem! No rsfmon.log files."
+            fi
+	    if [[ -f "$col/kernel/messages" ]]; then 
+	        time cat $col/kernel/messages* |tsconv -msgs >> $my_out
+	    else
+                echo "Problem! No messages under $col"
+            fi 
+                
+            # process 
+            shift
+        ;; 
+    esac
+done
+echo "Coalescing logs for $my_hostname ..."
+time cat $outfile.*.scratch | sort > $outfile
+rm $outfile.*.scratch
+endtime=`date +%s`
+echo "Eviscerated log saved to $outfile"
+echo "Total runtime: $( echo "$endtime - $starttime" | bc -l )"
+

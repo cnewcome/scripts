@@ -1,0 +1,15 @@
+#!/bin/bash
+
+newdrive=$(echo $1 | grep -o "[gw].*" | cut -c2-)
+echo $newdrive
+
+printf "*** hddisco output ***\n"
+wwn=$(cat disk/hddisco.out | grep $newdrive -A35 -B12 | grep -in = | cut -d'=' -f2 | sed -e s/://g | head -1)
+numtogrep=$(cat disk/hddisco.out | grep $wwn -A25 -B25 | grep -in = | cut -d'=' -f1 | sed -e s/://g | tail -1)
+cat disk/hddisco.out | grep $wwn -A$(expr $numtogrep)
+
+printf "\n*** retire_store output ***\n"
+strings fma/retire_store | grep -i $newdrive
+
+printf "\n*** messages output ***\n"
+cat kernel/messages* | grep -i $newdrive

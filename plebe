@@ -1,0 +1,206 @@
+#!/bin/bash
+#set -x 
+# quickly summarize significant sparta data non-conclusively
+# Benjamin Hodgens 2/2015
+# ben.hodgens@nexenta.com
+# If this doesn't work properly, please verify Sparta is latest version; otherwise, report failures to me.
+# if you're insistent on not providing feedback or making modifications yourself please comment your work
+
+# 2016-08-17    bhodgens    removed extraneous redundancy, added pool import verification
+div="-------------------------------------------------"
+echo $div
+if [[ $(grep "Open Storage Appliance" /etc/issue | grep -v "v3.") ]]; then
+        #echo "This is Nexenta 4.x"
+	greppfx="/usr/gnu/bin/"
+else 
+	greppfx=""
+fi
+if [[ -z $1 ]] ; then
+	echo "To run, specify the filename of the a pool's txg logging, with optional 'long' output, eg:"
+        echo "  $ plebe zpool_open_pool1.out long"
+        echo "  $ plebe zfstxg_awesomepool.out"
+        echo $div
+	echo "ls of possible available:"
+#	ls *{open,txg}*.out*
+        ls zfstxg*.out*
+	exit
+else
+	pooltxg=$1
+	echo "Analyzing for $pooltxg"
+	echo
+fi
+if [[ $2 == "long" ]]; then
+	echo "Long output selected; output will be significantly more verbose."
+	echo
+fi
+
+basename=`echo $1 | sed 's/.[2][0-9][0-9][0-9].*//g'`
+ds=`echo $1 | sed "s/^${basename}.//g"` #TODO
+poolname=$(echo $basename | cut -f 1 -d . | sed -e s/zfstxg_open_//)
+echo datestamp of run:$ds
+echo bn=$basename
+echo "poolname is: $poolname"
+
+if [[ $(grep $poolname zpool_list.out | awk {'print $1'} | head -n1) != $poolname ]]; then 
+    echo "$poolname wasn't imported at the time of Sparta run!" 
+    #exit probably need TODO this
+fi
+echo "Sparta runtime period:"
+head -n10 iostat.out.$ds | ${greppfx}grep ^[A-Z] | head -n1
+tail -n300 iostat.out.$ds | ${greppfx}grep ^[A-Z] | tail -n1
+
+echo
+
+# ARC meta 
+echo "ARC related info:" 
+${greppfx}grep arc_meta_ arc.out | sort -r | uniq -c
+echo $div
+
+# hard errors on disks
+echo $div
+hard_errors=$(${greppfx}grep 'Hard Errors: [^0]' iostat-En.out) 
+if [[ $hard_errors ]]; then
+	echo "Warning: isotat indicates errors. Please review Collector FMA for further details!"
+else 
+    echo "No disk errors in iostat."
+fi
+
+# fragmentation
+echo $div
+fragmentation=$(tail -n 20 hotkernel.out | ${greppfx}egrep 'avl|metaslab|space_map')
+if [[ $fragmentation ]]; then
+	echo "Fragmentation likely:"
+	printf $fragmentation
+        echo
+else 
+	echo "OK: No direct evidence of fragmented data."
+fi
+echo $div
+long_delete=$(${greppfx}grep dmu_free_long_range hotkernel.out )
+if [[ $long_delete ]]; then
+    echo "Large/long deletes encountered in hotkernel data."
+    printf $long_delete
+    echo
+fi
+# spa txg time
+echo $div
+count=`cat $pooltxg | wc -l`
+if [[ "$count" -gt "100" ]]; then
+	echo "Sufficient transaction data exists to examine..."
+	echo "txg commit taking >5s:"
+	if [[ $2 == "long" ]]; then
+		${greppfx}grep -P "([5-9][0-9]{3}|[0-9]{5}) ?ms" $pooltxg
+	else	
+		${greppfx}grep -P "([5-9][0-9]{3}|[0-9]{5}) ?ms" $pooltxg > zpool_hightxg.$pooltxg
+	        wc -l zpool_hightxg.$pooltxg
+        fi
+else 
+	echo "WARN: txg: Insufficient data or run period for assessment. $count"
+fi
+echo $div
+
+# pool capacity
+pool_capacity=$(${greppfx}grep "[6-9][0-9]\%" zpool_list.out | grep -v syspool)
+if [[ $pool_capacity ]]; then
+	echo "Pool capacity exceeds recommended operational capacity for performance:"
+	printf "$pool_capacity"
+	echo
+else 
+	echo "Disk capacity is within acceptable utility percentage."
+fi
+echo $div
+
+# high disk IO
+
+count=`wc -l iostat.out.$ds | cut -f 1 -d " "`
+ioif=iostat.out.$ds
+iohf=iostat.high.out.$ds
+
+if [[ "$count" -lt "300" ]]; then
+	echo "Warning: IO: insufficient run time for disk IO assessment."
+elif [[ $2 == "short" ]]; then
+    echo "Short run selected, not parsing iostat data."
+else 
+	echo "Likely disk bottlenecks found."
+	echo "See iostat.high.out file for per-disk IO bottlenecks."
+	# disks with roughly >100 IOPS in read and/or write, any wait time, and/or busy 40% or more
+	${greppfx}egrep -v '\s[0-9] c[0-9]|\s[0-3][0-9] c[0-9]|extended|tin|tout' $ioif | ${greppfx}grep -P '^ *[1-9][0-9]{2}\.[0-9] *[1-9][0-9]{2}\.[0-9]|device|^[A-Z]|^ *[0-9]{2}\.[0-9] *[1-9][0-9]{2}\.[0-9]|^ *[0-9]{2}\.[0-9] *[0-9]{2}\.[0-9]|[ 0-9][1-9] *[3-9][0-9] c[0-9][a-z]' > $iohf
+fi	 
+echo $div
+
+#block/record size
+blockrecord=$(egrep "blocksize|recordsize" zfs_get-r_all.* |grep -v syspool |  awk '{print $3}' | sort | uniq -c)
+# TODO this is only mildly helpful/doesn't print properly
+#if [[ "$(echo $blockrecord| wc -l)" -gt "1" ]]; then
+#    echo "Multiple pool block/record sizes detected!"
+#else 
+#    echo "Block/record size is consistent: "
+#fi 
+echo "Block sizes present:"
+echo -n $blockrecord
+echo 
+echo $div
+# kmem reap
+kmem_reap=$(${greppfx}grep "[3-9][0-9][0-9][0-9] ms" kmem_reap.out.$ds)
+ko=kmem_reap.high.out.$ds
+if [[ $kmem_reap ]]; then
+	echo "High kmem reaping periods over 3 seconds in duration:" 
+	if [[ $2 == "long" ]]; then
+		printf "$kmem_reap" | ${greppfx}grep "[3-9][0-9][0-9][0-9] ms"
+	else 
+		printf "$kmem_reap" | ${greppfx}grep "[3-9][0-9][0-9][0-9] ms" > $ko
+                wc -l $ko
+	fi
+	echo "Extremely high kmem reaping periods over 5 seconds in duration:" 
+		printf "$kmem_reap" | ${greppfx}grep "[5-9][0-9][0-9][0-9] ms" | wc -l
+else 
+	echo "No notably high memory reaping occurring over 3s in duration."
+fi 
+echo $div
+
+# blocking processes
+vmi=vmstat.out.$ds
+vmo=vmstat.blocking.out.$ds
+if [[ $(${greppfx}grep "^.[0-9]*\ [1-9][ 0-9]" $vmi) ]]; then 
+	echo "Number of processes blocking on IO during Sparta collection period:"
+	${greppfx}grep "^.[0-9]*\ [1-9][ 0-9]" $vmi > $vmo
+        wc -l $vmo
+fi 
+echo "Distribution of read/write latency occurring to pool greater than 8ms, during period sampled:"
+${greppfx}grep -P "(^\ +[8-9][0-9]{3}+|^\ +[0-9]{5}).*@" rwlatency.out.$ds | awk '{print $1"\t"$2}' | sort | uniq -c
+
+# nfs threads 
+echo $div
+nf=nfs_threads.out.$ds
+if [[ -e $nf ]]; then
+	nfs_threads=$(${greppfx}grep -P "([1-9][0-9]{2}|9[0-9])$" $nf)
+fi
+if [[ -e $nf ]] && [[ $nfs_threads ]]; then
+	echo "NFS thread pool utilization at or over 90%:"
+	if [[ $1 == "long" ]]; then
+		printf "$nfs_threads" | wc -l
+	else
+		printf "$nfs_threads" 
+	fi
+elif [[ ! -e $nf ]]; then  
+	echo "No NFS logging performed."
+else 
+	echo "No NFS thread pool utilization over 90%."
+fi
+
+echo
+# iscsi
+isi=iscsisvrtop.out.$ds
+iso=iscsisvrtop.all.out.$ds
+if [[ -e $isi ]]; then
+	echo "iSCSI summary for all hosts output to iscsisvrtop.all.out"
+	egrep "^20[0-9][0-9] |^all|^client" $isi > $iso
+fi
+
+ddt=$(grep "DDT.*on disk" zpool_status.out | uniq)
+if [[ $ddt ]]; then
+    echo "DDT present! This will cause a negative performance impact across all operations."
+    echo $ddt
+fi
+
+exit

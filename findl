@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+cd ~/ingested/links
+ls -ltr | awk '{print $11}' | cut -c28-200 > /tmp/indexlist.txt
+
+TODAY=$(date +"%F")
+
+if [[ -z "$1" ]]; then
+    cat /tmp/indexlist.txt | grep $TODAY
+else
+    cat /tmp/indexlist.txt | grep $1
+fi
+
+printf "\nEnd of list\n"

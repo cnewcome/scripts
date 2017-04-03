@@ -1,0 +1,85 @@
+#!/bin/bash
+# find common settings/options (specific to NFS) across a list of collectors 
+# purpose: cross section of diverse collectors to provide a base profile for Q/A issue reproduction
+# cmsettings <path to list of collector files> 
+# Benjamin Hodgens 3/15/2016
+
+# NFS commonality - servers, version(s), lockd
+# nscd presence
+# DNS commonality - # of servers
+# dnlc/ncsize 
+# pool count
+# vdev count 
+# iostat ? 
+# number of LUNs
+# pool capacity 
+echo "Hi!"
+col_paths=$(for i in $(cat $1); do listcol -c=$i; done)
+i=0
+for col in $col_paths; do 
+    echo "working on $col..." 
+    nfs_servers[$i]=$(grep ^servers $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_lockd_listen_backlog[$i]=$(grep ^lockd_listen_backlog $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_lockd_servers[$i]=$(grep ^lockd_servers $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_lockd_retransmit_timeout[$i]=$(grep ^lockd_retransmit_timeout $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_grace_period[$i]=$(grep ^grace_period $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_client_versmin[$i]=$(grep ^client_versmin $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_client_versmax[$i]=$(grep ^client_versmax $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_server_delegation[$i]=$(grep ^server_delegation $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_max_connections[$i]=$(grep ^max_connections $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_listen_backlog[$i]=$(grep ^listen_backlog $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=" )
+    nfs_mountd_listen_backlog[$i]=$(grep ^mountd_listen_backlog $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_mountd_max_threads[$i]=$(grep ^mountd_max_threads $col/nfs/sharectl-get-nfs.out | cut -f 2 -d "=")
+    nfs_defaultdomain[$i]=$(cat $col/nfs/defaultdomain)
+    nfs_dfshares[$i]=$(grep -v RESOURCE $col/nfs/dfshares.out | wc -l)
+    nfs_clients[$i]=$(grep -v "export" $col/nfs/showmount-a-e.out | cut -f 1 -d :  | sort | uniq -c | grep -v "/" | wc -l)
+    nfs_v4calls[$i]=$(grep -A2 "Server NFSv4" $col/nfs/nfsstat-s.out | grep ^[0-9] | awk {'print $1'})
+    nscd_status[$i]=$(grep name-service-cache $col/services/svcs-a.out | awk {'print $1'})
+    dns_nameservers[$i]=$(grep nameserver $col/nameservices/resolv.conf | wc -l)
+    dns_resolv_extras[$i]=$(egrep -v "nameserver|domain|search" $col/nameservices/resolv.conf | wc -l)
+    dns_nsswitch_hosts[$i]=$(grep hosts $col/nameservices/nsswitch.conf )
+    dns_nsswitch_ipnodes[$i]=$(grep ipnodes $col/nameservices/nsswitch.conf)
+    zfs_pool_count[$i]=$(grep -A1 NAME $col/zfs/zpool-status-dv.out | egrep -v "syspool|NAME|^-" | wc -l)
+    zfs_capacity[$i]=$( awk {'print $3'} $col/zfs/zpool-list-o-all.out)
+    i=$i+1
+done
+# feed me array
+function statist() {
+    declare -a array=("${!1}")
+    outi=$i
+    while [[ $outi -gt 0 ]]; do
+        echo ${array[$outi]}
+        outi=$outi-1
+    done | sort | uniq -c 
+}
+OIFS=$IFS
+IFS=$'\n'
+echo "NFS servers running:" 
+    statist(${nfs_servers[@]})
+echo "lockd_listen_backlog:"
+    statist(${nfs_lockd_listen_backlog[$outi]} )
+echo "nfs_lockd_servers: "
+    statist(${nfs_lockd_servers[$outi]} )
+    echo 
+    echo "nfs_lockd_retransmit_timeout: "
+    echo ${nfs_lockd_retransmit_timeout[@]} | sort | uniq -c
+    echo 
+    echo "nfs_client_versmin:"
+    echo "nfs_client_versmax:"
+    echo "nfs_server_delegation:"
+    echo "nfs_max_connections:"
+    echo "nfs_listen_backlog:"
+    echo "nfs_mountd_listen_backlog:"
+    echo "nfs_mountd_max_threads:"
+    echo "nfs_defaultdomain:"
+    echo "number nfs shares:"
+    echo "nfs cliens:"
+    echo "nfs v4 call presence:" 
+    echo "nscd_status:"
+    echo "dns_nameservers (count):"
+    echo "dns_resolv_extra options:"
+    echo "dns_nsswitch_hosts:" 
+    echo "dns_nsswitch_ipnodes:"
+    echo "zfs_pool_count:"
+    echo "zfs_capacity:"
+    echo 

@@ -1,0 +1,173 @@
+#!/bin/bash
+#Aaron Knodel
+#You are now subscribed to cat facts!
+
+#Cats are the most popular pet in the United States: There are 88 million pet cats and 74 million dogs.
+#There are cats who have survived falls from over 32 stories (320 meters) onto concrete.
+#A group of cats is called a clowder.
+#Cats have over 20 muscles that control their ears.
+
+#For highlighting
+RED='\033[0;31m'
+NC='\033[0m'
+supversions='4\.0\.4|3\.1\.6'
+
+#Version and hostname
+versioninfo=$(cat collector.stats | egrep 'Appliance version|Hostname')
+echo $versioninfo
+if [[ `echo $versioninfo | egrep '4\.0\.4|3\.1\.6' | wc -l` -ne 1 ]]; then
+	echo -e "${RED}Appliance version is EOL${NC}"
+fi
+
+#License validity check
+outputdate=$(keycheck.pl `cat appliance/nlm.key`)
+echo License $outputdate
+expirydate=$(echo $outputdate | awk '{print $3}')
+currentdate=$(date +%s)
+if [[ $(date -d `echo $expirydate` +%s) -lt $currentdate ]]; then
+	echo -e "*** ${RED}LICENSE IS EXPIRED ON THIS MACHINE${NC} ***"
+fi
+
+#Check for Sandisk Infiniflash
+infiniflash=$(cat enclosures/nmc-c-show-jbod-all.out | egrep -i 'SDIFHS01|SDIFHS02' | wc -l)
+if [[ $infiniflash  != 0 ]]; then
+	echo -e "${RED}System is an infiniflash array. High Priority! ${NC}"
+fi
+
+#Count of pools on system, health, and capacity
+echo $((`cat zfs/zpool-list-o-all.out | wc -l` - 2)) pool\(s\) imported on this system:
+for pool in $(cat zfs/zpool-list-o-all.out | awk '{print $1}' | egrep -v 'syspool|NAME'); do
+	echo - $pool - `cat zfs/zpool-list-o-all.out | grep "^$pool " | awk '{print $5 " - " $3}'`
+done
+
+#Check bad drives
+numbaddrives=$(cat zfs/zpool-status-dv.out | egrep ' c[0-9]t*d*' | egrep -vi ' avail|online|inuse' |  wc -l)
+if [[ $numbaddrives != 0 ]]; then
+        echo -e "${RED}There are $numbaddrives unhealthy or stale drive(s) in zpool status on this system ${NC}"
+else
+        echo 'All drives on this system appear to be healthy in zpool status'
+fi
+
+#ATA check
+if [[ $(cat disk/hddisco.out | grep 'vendor ATA' | wc -l) != 0 ]]; then
+	zswosyspool=$(cat zfs/zpool-status-dv.out | sed -e '/syspool/ {N;N;N;N;d;}')
+	string1="nothinghere"
+	string2=$(for i in $(cat disk/hddisco.out | grep 'vendor ATA' -B20 | grep = | cut -d= -f2); do echo "|$i"; done)
+	syspooldrivestring=$(echo $string1$string2 | sed -e s/\ //g)
+	if [[	$(echo $zswosyspool | egrep '$(echo $syspooldrivestring)' | wc -l) != 0 ]]; then
+        	echo ATA drives present - run whereata to see where and drivedisplay to see each disk model
+	fi
+fi
+
+#Number of drives
+echo Number of drives connected to this system: $(cat disk/hddisco.out | grep = | wc -l)
+
+#Number of snapshots not on the syspool
+echo Number of snapshots: $(cat zfs/zfs-get-p-all.out | grep @ | grep creation | grep -v syspool | wc -l)
+
+#Number of auto-sync jobs
+numsyncjobs=$(cat services/nmc-c-show-auto-sync-v.out | grep service | wc -l)
+if [[ $numsyncjobs -gt 0 ]]; then
+	echo Number of auto-sync jobs: $numsyncjobs
+fi
+
+#Number of auto-snap jobs
+numsnapjobs=$(cat services/svcs-a.out | grep auto-snap | wc -l)
+if [[ $numsnapjobs -gt 0 ]]; then
+	echo Number of auto-snap jobs: $numsnapjobs
+fi
+
+#Block sizes
+if [[ $(cat zfs/zfs-get-p-all.out | grep -v syspool | egrep ksize | awk '{print $3}' | sort | uniq -c) != "" ]]; then
+	echo Block sizes: $(cat zfs/zfs-get-p-all.out | grep -v syspool | egrep ksize | awk '{print $3}' | sort | uniq -c)
+fi
+
+#Record sizes:
+if [[ $(cat zfs/zfs-get-p-all.out | grep -v syspool | egrep dsize | awk '{print $3}' | sort | uniq -c) != "" ]]; then
+	echo Record sizes: $(cat zfs/zfs-get-p-all.out | grep -v syspool | egrep dsize | awk '{print $3}' | sort | uniq -c)
+fi
+
+#Uptime
+echo Uptime: `cat system/uptime.out`
+
+#Dump contents check
+if [[ $(cat kernel/ls-la-dumpadm-grep-savecore-directory-cut-d-f3.out | wc -l) != 3 ]]; then
+	echo Crash dump available on this system:
+	cat kernel/ls-la-dumpadm-grep-savecore-directory-cut-d-f3.out | grep vmdump
+fi
+
+#Swap size
+echo `expr $(cat zfs/zfs-get-p-all.out | grep swap | grep volsize | head -1 | awk '{print $3}') / 1024 / 1024` MB swap
+
+#RAM check
+echo `cat kernel/echo-memstat-mdb-k-tail-n2.out | tail -1 | awk '{print $3}'` MB of RAM
+
+#VSA check
+if [[ $(cat disk/hddisco.out | egrep -i 'vmware') == "" ]]; then
+	echo Real hardware, not VSA
+else
+	echo -e ${RED}VSA, not Hardware${NC}
+fi
+
+#Fibre Channel check
+fcinfo=$(cat hbas/fcinfo-hba-port-l.out)
+if [[ $fcinfo == *"No Adapters Found."* ]]; then
+	echo 'No Fibre Channel in use'
+elif [[ $fcinfo == "" ]]; then
+	echo 'Fibre Channel may or may not be in use'
+else
+	echo 'Fibre Channel in use'
+	if [[ $(cat hbas/fcinfo-hba-port-l.out | grep Initiator | wc -l) -gt 0 ]]; then
+		echo System appears to have ports in Initiator mode \(Possible Metro HA\)
+	fi
+fi
+
+#Check for comstar targets in hddisco
+if [[ `cat disk/hddisco.out | grep 'vendor NEXENTA' | wc -l` -ne 0 ]]; then
+	echo -e "${RED}System appears to be consuming COMSTAR luns${NC}"
+fi
+
+#Block, filesystem check
+if [[ $(cat zfs/zfs-get-p-all.out | grep type | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep volume) != "" ]]; then
+	echo Block volumes present: $(cat zfs/zfs-get-p-all.out | grep type | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep volume | wc -l)
+	cat comstar/stmfadm-list-state.out | grep 'ALUA Status'
+	if [[ $(cat comstar/iscsiadm-list-discovery-address-v.out | wc -l) -gt 0 ]]; then
+		echo 'System shows lines in iscsiadm list discovery-address -v; the system may be a Metro HA initiator'
+	fi
+fi
+if [[ $(cat zfs/zfs-get-p-all.out | grep sharenfs | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep -v off) != "" ]]; then
+	echo NFS shares present: $(cat zfs/zfs-get-p-all.out | grep sharenfs | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep -v off | wc -l)
+fi
+if [[ $(cat zfs/zfs-get-p-all.out | grep sharesmb | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep -v off) != "" ]]; then
+        echo SMB shares present: $(cat zfs/zfs-get-p-all.out | grep sharesmb | egrep -vi 'syspool|nza-reserve|AutoSync|snap' | grep -v off | wc -l)
+fi
+
+#Domain check
+if [[ $(cat cifs/smbadm-list-v.out) != *"WORKGROUP"* ]]; then
+	echo Joined to domain:
+	cat cifs/smbadm-list-v.out
+else
+	echo Not part of a domain
+fi
+
+#Check if cluster
+if [[ $(grep configured plugins/opthacrsf-1binrsfcli-i0-stat.out) != "" || $(grep 'no reply from host' plugins/opthacrsf-1binrsfcli-i0-stat.err | wc -l) -eq 1 ]]; then
+	echo System is part of a cluster
+else
+	echo System is not part of a cluster
+fi
+
+#Check last 30 days of FMA
+count=$(zcat fma/fmdump-evt-30day.out.gz | grep class | wc -l)
+echo 'Entries in fmdump -eV in the past 30 days: ' $count
+
+#Check devices in retire store
+count=$(strings fma/retire_store 2>&- | grep ^/ | wc -l)
+echo 'Retired device count from retire_store: ' $count
+
+#Reminder about failed commands
+termlist=`cat collector.stats | grep 'Terminated List' -A100 | egrep -v 'Working|Terminated' | wc -l`
+if [[ $(echo $termlist) != 0 ]];then
+	echo A reminder that these commands failed:
+	cat collector.stats | grep 'Terminated List' -A100 | egrep -v 'Working|Terminated'
+fi

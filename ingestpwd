@@ -1,0 +1,16 @@
+#!/bin/bash
+# Benjamin Hodgens 4/2014
+# uses ~/bin{got,
+count=0
+#tmp
+for i in $(ls collector*.tar.gz); do
+    count=$(($count+1))
+    dir=$(echo $i | sed 's/T\.[0-9].*$/T/')
+    dirname[$count]=$dir 
+    md5sum $i > $i.md5
+    mv $i ~/upload/caselogs/
+    mv $i.md5 ~/upload/caselogs/
+    echo "Ingesting: ${dirname[$count]}"
+done
+
+exit;

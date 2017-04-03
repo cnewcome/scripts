@@ -1,0 +1,18 @@
+#!/bin/bash
+. ~/bin/grepp.sh
+echo $1
+if [[ -z "$1" ]]; then
+    echo "Specify the string, or a substring of, the error type you want to determine paths on. Eg:"
+    echo "$0 ereport.io.scsi.cmd.disk.tran"
+    echo "$0 slow-io"
+fi
+if [[ ! -z "$2" ]]; then 
+    if [[ $2 == "1" ]]; then    
+        for i in $(csummary | grepp $1 | grep device | cut -f 2 -d w | cut -f 1 -d ,); do 
+            grep -B30 $i enclosures/for-enclosure-in-sesctl-list-grep-v-enclosure_id-awk-print-1-do-echo-enclosure-sesctl-target_port-enclosure-done.out | egrep "^[A-Z]|$i" | tail -n2 
+        done
+    elif [[ $2 == "2" ]]; then 
+        for a in $(for i in $(csummary | grepp slow-io | grep device | cut -f 2 -d "@" | sed -e s/g// ); do 
+            grep -B20 $i disk/hddisco.out | egrep = | sed -e s/=//; done); do grep -B120 $a */*jbod*.out | egrep "$a|^name|alias"; done
+
+

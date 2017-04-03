@@ -1,0 +1,11 @@
+#!/bin/bash
+
+cat os/.bash_history | sed -e s/#14/@14/g > os/.bashhistorynew
+
+while read newlinebh; do
+if [[ $(echo $newlinebh | grep ^@) != "" ]]; then
+	date -d $newlinebh
+else
+	echo $newlinebh
+fi
+done < os/.bashhistorynew

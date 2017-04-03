@@ -1,0 +1,7 @@
+#!/bin/bash
+# process collectors in pwd
+for i in $(ls collector-*.tar.gz); do 
+    md5sum $i > $i.md5
+    mv ${i}* ~/upload/caselogs/
+    ingested: ${i}
+done

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+echo "Enter Date to grep:"
+read date_grep
+
+printf "*** Error type and count during period ***\n"
+zcat fma/fmdump-e.out.gz | grep "$date_grep" | grep -v "$date_grep 201" | awk '{print $NF}' | sort | uniq -c
+
+printf "\n*** Device list and count of errors ***\n"
+zcat fma/fmdump-evt-30day.out.gz | grep -A25 "$date_grep" | grep -v "$date_grep 201" -A25 | grep device-path | awk '{print $NF}' | sort | uniq -c 
+
+printf "\n*** Unique Drives in Period ***\n"
+for i in `zcat fma/fmdump-evt-30day.out.gz | grep -A25 "$date_grep" | grep -v "$date_grep 201" -A25 | grep device-path | sort | uniq -c | cut -d'g' -f2 | grep -v pci`; do cat disk/hddisco.out | grep -B15 $i | grep '=' | cut -d'=' -f2 | sort | uniq; done
+
+printf "\n*** fmadm faulty output ***\n"
+cat fma/fmadm-faulty.out | grep "$date_grep"

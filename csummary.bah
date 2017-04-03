@@ -1,0 +1,1037 @@
+#!/bin/bash 
+# NOTICE: if you're going to modify this script, please be certain your changes go into the correct 'subsection'. This script will likely be broken and subcomponents 'sourced' at a future point.
+# TODO use the go-live directory/files to determine which Collector, if any, was used to perform SAC. note: older systems won't have this, indicate oldest several collectors in this case.
+# TODO subdivide csummary output based on input ARGs for hardware, protocols, errors, misc. for external combinatory assessments
+# TODO check for Collector(s) from other HA node from same day
+# TODO cifs/nfs nbmand check: 
+# TODO * for each of cifs filesystems, 
+# TODO    check to see if it's also an nfs filesystem
+# TODO        - if it is, verify whether nbmand is enabled
+# TODO add 'single disk failure' detection (NEX-3988, NEX-6064) 
+# TODO add per-mpt_sas disk-centric analysis eg: grep -A1 mpt_sas6 kernel/messages | grep target
+# TODO need initial Collector version detection, csummary won't work fully on older crap
+# TODO update swap-detection file, this is changing in future version of collector to swap -l -h
+# TODO swap determination per installation guide 
+# TODO dump sizing correctness per installation guide 
+# TODO do checks for non-default pool options having been configured (eg. sync=, primarycache, etc.)
+# TODO integrate JB's ~/bin/nic-check.pl
+# TODO provide some sort of recommendation based on # of clients and # of lockd configured 
+# TODO refine ncsize assessment metric to be more granular 
+# TODO fma data fmdump size check before running
+# TODO `messages` size check before running
+# TODO check messages for mpt_sas errors for specific disks and see if they have been removed from pool (eg. faulted drives not physically pulled)
+# TODO add quick arc demand metadata hitrate check
+# TODO add pool creation date check - grep "zpool create" zfs/zpool-history-il.out | grep -v syspool | cut -f 1 -d "."
+# TODO need nice little functions for eg. hostname, pool list, whatever may be apropos for NEX-specific checks in secondary scripts
+# TODO convert atomic checks into nexchecklets 
+# TODO kmem flags detection 
+# TODO integrate nexcheck framework into csummary
+# TODO is_ssd check
+# TODO check for Sandisk Infiniflash - in nmc-c-show-jbod-all.out you'll find this line:
+    #model           SANDISK-SDIFHS01
+    #that's for an IF100.  if the last char in the string is a 2, then it's an IF150.
+
+# grep script for more "# TODO" strings for more TODOs. 
+
+# 2015-09-13 -- cnewcome - added calculations for size of dedup tables on disk and in memory
+# 2015-10-19 -- cnewcome - added op-codes for derrs in "long" output
+# 2015-10-21 -- cnewcome - added SMART check for Enabled disk in "long" output
+# 2015-10-27 -- cnewcome - added C-State check
+# 2015-10-27 -- bhodgens - added NFS client count check, reorganized output
+# 2016-01-05 -- bhodgens - added netstat -s processing 
+# 2016-01-06 -- bhodgens - formatting changes
+# 2016-01-06 -- bhodgens - adding Sparta qualification criteria, denoted PERF
+# 2016-02-08 -- bhodgens - modifying TCP retrans rationale for packets instead of bytes, additional notes about 32 bit counter
+# 2016-02-08 -- bhodgens - aaaand then removed retransmit info outright, as it's not going to be helpful until they fix the limit
+# 2016-03-16 -- cnewcome - Added calculations for memory and dump size to be human-readable.
+# 2016-05-19 -- cnewcome - Added ALUA check after finding ALUA enabled for iSCSI on case 87844 and not noticing it for a few weeks.
+# 2016-05-23 -- bhodgens - added sanity checks for zpool primarycache
+# 2016-06-01 -- bhodgens - comstar initiator/target count check, slight reorganization of output
+# 2016-06-01 -- bhodgens - cleaned up NFS/CIFS/iSCSI presentation 
+# 2016-06-06 -- bhodgens - significant addition/revision of iSCSI and FC related detection
+# 2016-06-06 -- bhodgens - added crude logic and summarization for pool configuration 
+# 2016-06-07 -- bhodgens - FC/iSCSI specifics clarified 
+# 2016-06-08 -- bhodgens - mr_sas driver and crude panic checks; zero-sum reporting squelched
+# 2016-06-15 -- cnewcome - check for NEX-6532
+# 2016-06-22 -- bhodgens - dnlc miss check, mr_sas tweak, subnet check, cleanup, added NEX section, clarified various conditions, addedmisc. services check, probably something else
+# 2016-06-24 -- bhodgens - other cluster node Collector lookup 
+# 2016-06-27 -- bhodgens - version checking, auto-sync jobs, 'framework' additions
+# 2016-06-28 -- bhodgens - more framework/checks. Options (options are good, right?). Additional NEX-type checks for issues planned (bah/changelog-404, known-issues.txt)
+# 2016-06-30 -- bhodgens - added 'Tasks:' comments for 'SAC checklist' generation for each major task performed
+# 2016-07-05 -- cnewcome - modified disk output to take into account missing revision line in hddisco. See (bah/collector-list.txt)
+# 2016-07-06 -- cnewcome - added checks for swap/dump size based on the new recommendations from JSH on 2016-06-29.
+# 2016-07-06 -- cnewcome - tightened up the checks for fmadm faulty and made it display the previous week's faults.
+# 2016-07-13 -- cnewcome - added ARC target, max, min and size calculations to the output.
+# 2016-07-13 -- cnewcome - added formatting for arc_meta_* it automatically displays MB if under 1GB in size.
+# 2016-08-03 -- bhodgens - added HBA IR firmware check 
+# 2016-08-05 -- cnewcome - added a check for a matching service name in HA config for other node's collector.
+# 2016-08-08 -- bhodgens - fixed 'service' irritating detection fudgeups regarding newlines 
+# 2016-08-08 -- bhodgens - added ndmp etc. simple service check
+# 2016-08-23 -- cnewcome - added a check to display license expiration with keycheck.pl.
+# 2016-09-15 -- cnewcome - added cpupm check because of case 93291.
+# 2016-09-15 -- cnewcome - added detection for ZIL/L2ARC as cluster HB devices 93291 (collector-G160-0823B42541-GBFDH7JFF-DJNJIM_san-wh-004_2016-09-14.09-21-48BST)
+# 2016-09-18 -- cnewcome - added detection for NEX-6064 patch. (collector-G160-0823B42541-GBFDH7JFF-DJNJIM_san-wh-004_2016-09-18.03-02-04BST)
+# 2016-09-21 -- cnewcome - added retire_store parsing. 
+# 2016-09-21 -- bhodgens - enhanced retire_store parsing.
+# 2016-09-21 -- bhodgens - kmem_flags detection, NEX-7551
+
+# if 'force' is passed, we will run csummary even if the Collector falls outside of Supported version(s) 
+# as of writing 2016-0625, supported versions are 4.0.4+ and 3.1.6+
+
+usage="$(basename $0) -force -long -hw -bugs -resolved -compare=* -h"
+for arg in "$@"; do
+    case $arg in 
+        --force|-force|force) 
+            force_run="yes"
+            echo "*** Ignoring unsupported version(s), running anyway.!"
+            shift
+            ;;
+        --long|-long|long)
+            long_output="yes"
+            echo "*** Long output selected; Output will be significantly more verbose. This may go away soon."
+            shift
+            ;;
+        --hw|-hw|hw)
+            # output hw specific issues in the hardware section
+            shift
+            ;;
+        --bugs|-bugs|bugs)
+            # "Known Issues" for the current release, yet unresolved (pulled from Jira), probably not helpful or exhaustive  
+            shift
+            ;;
+        --resolved|-resolved|resolved)
+            # issues resolved in a prior release which the customer may benefit by; protocol/use specific
+            shift
+            ;; 
+        --compare=*|-compare=*|compare=*)
+            # TODO make csummary compare multiple collectors historically for a basic configuration delta. Very fuzzy. May not happen.
+            #param=$2
+            shift
+            ;; 
+        --tasks|-tasks|tasks)
+            echo "Specific test-tasks performed performed by csummary:"
+            grep "# Task:" ~/bin/csummary
+            ;;
+        -h|?|-?|help|-help|--help)
+            echo $usage
+            exit
+            ;;
+        TODO)
+            grep "# TODO" ~/bin/csummary
+            exit
+            ;;
+        *) 
+            echo "Wrong parameters: $1"
+            echo $usage
+            exit
+            ;;
+    esac
+done
+echo
+# PERF related
+# a weight of 20 makes no assumptions about issues; and TODO or higher is "go ahead and run Sparta". 
+# We subtract when issues are encountered which need to be resolved prior to running Sparta, printing results at the end
+# array of strings/checklist of perf analysis prereqs to be printed at the end
+# perf_pre[] at end for perf
+perf_pre=('')
+function perf_req() { 
+# add a PERF req
+    perf_pre=("${perf_pre[@]}" "$1")
+}
+pweight="20"
+# /PERF related
+
+if [[ ! -e collector.stats ]]; then
+    echo "Please run me in the root of a Collector without any arguments."
+    exit
+else 
+    bad_hb=""
+    # need to do this for looking for other collectors/nodes, perhaps the wrong place but... perhaps it's needed somewhere.
+    my_license=$(grep "^License key" collector.stats | awk '{print $3}') # TODO check to see if this is a valid license for a supported system? 
+    my_license_type=$(echo $my_license | awk -F- '{print $1}')
+    # TODO may also need to do something here about hostname case, it appears to differ shomehow between Collectors and filenames, and between hosts
+    my_hostname=$(grep ^Host collector.stats | awk '{print $2}' | sed 's/.*/\L&/' )
+    my_domain=$(cat nfs/domainname.out)
+    my_pwd=$(pwd)
+    my_date=$(echo $my_pwd | awk -F_ '{print $3}' | sed -e 's/\(20[0-9]\{2\}-[0-1][0-9]-[0-3][0-9]\).*/\1/') # TODO my_date appears to sometimes be wrong on old Collectors
+    license_expire=$(/home/support/bin/keycheck.pl $(echo $my_license))
+    version_collector=$(grep ^Collector collector.stats | cut -f 2 -d "(" | cut -f 1 -d ")")
+    version_appl=$(grep ^"Appliance version" collector.stats | cut -f 2 -d "(" | cut -f 1 -d ")" | sed -e 's/v//') 
+    #echo my_date $my_date
+    printf "*** Hostname: $my_hostname\n"
+    printf "*** Domain: $my_domain\n"
+    printf "\n*** LICENSE $license_expire\n\n"
+fi
+
+case $version_collector in
+# As of 2016-06-28, current version is 1.5.3
+1.5.[3-5]) 
+    echo "Collector ($version_collector) is current."
+    ;;
+1.5.[0-2])
+    echo "Collector ($version_collector) is (slightly) out of date. Please upgrade."
+    ;;
+1.[1-2].[0-0]) 
+    echo "WARNING: Holy bats, cowman. Upgrade the Collector (from stock $version_collector)!"
+    ;;
+*)
+    echo "WARNING: Collector ($version_collector) is SIGNIFICANTLY out of date. Please upgrade!"
+    ;;
+esac
+
+# Task: check whether appliance is at a supported version
+case $version_appl in 
+"4.0.4"*|"3.1.6"*|"3.0"*) 
+    echo "Appliance ($version_appl) is supported!"
+    ;;
+"3.1.3"*|"3.1.4"*|"3.1.5"*|"4.0.3"*) 
+    echo "Warning: Appliance $version_appl is no longer supported! Direct customer to upgrade and to review the portal."
+    echo "Please involve your TAM or manager in this decision."
+    echo 
+    echo "Run 'csummary -force' if you're certain this Collector should be worked."
+    if [[ ! ($force_run = "yes") ]]; then 
+        exit 
+    fi
+    ;;
+*) 
+    echo "Unable to detect appliance version ($version_appl)!"
+    ;;
+esac
+#mpt_sas patch check
+mpt_sas_patch=$(grep driver-storage-mpt-sas system/dpkg-l.out | awk '{print $3}' | awk -F. '{print $2}')
+if [[ ! -z $mpt_sas_patch ]]; then
+    echo "* NEX-${mpt_sas_patch}: PATCH Installed for mpt-sas."
+fi
+
+echo
+cat system/uptime.out
+echo ""
+# preliminary Collector 'health' 
+# Task: verify all software systems and standard diagnostic commands return successfully 
+col_terminated=$(grep -H terminated */*.stats | grep -v smbstat | wc -l)
+if [[ $col_terminated -gt "0" ]]; then 
+    echo "* Warning: multiple Collector subcommands terminated while running on the host!"
+    if [[ $long_output ]]; then
+        grep -H terminated */*.stats | grep -v smbstat 
+    else
+        printf  "\t * Terminated procesess: $col_terminated\n"
+    fi
+    echo
+fi
+# Memory and dump device size
+# Task: verify whether system memory, ARC, dump, and swap are configured appropriately for the role
+# PERF TODO - if arc_meta_used closely approaches arc_meta_limit (say, within 10%), and we can, we want to increase arc_meta_limit first. Positive weight gets assigned for not being required.
+arc_meta_used=$(grep 'arc_meta_used' zfs/echo-arc-mdb-k.out)
+arc_meta_limit=$(grep 'arc_meta_limit' zfs/echo-arc-mdb-k.out)
+arc_meta_max=$(grep 'arc_meta_max' zfs/echo-arc-mdb-k.out)
+arc_meta_used_num=$(echo $arc_meta_used | awk '{print $3}')
+arc_meta_limit_num=$(echo $arc_meta_limit| awk '{print $3}')
+arc_meta_max_num=$(echo $arc_meta_max | awk '{print $3}')
+
+# TODO arc_max detection is wrong, also need to determine overhead related to NEX-1760/NEX-6611
+if [[ -e kernel/modparams.out ]]; then
+    arc_max=$(echo "$(grep 'zfs_arc_max' kernel/modparams.out | awk '{print $2'}) /1024/1024/1024" | bc) # in GB 
+else 
+    if [[ $(grep zfs_arc_max kernel/system) ]]; then
+        arc_max=$(echo "$(grep 'zfs_arc_max' kernel/system | awk '{print $4'}) /1024/1024/1024" | bc) # in GB 
+    else
+        arc_max=0
+    fi
+fi
+
+
+if [[ ! $(grep terminated pci_devices/prtconf-v.stats | awk '{print $4}') = "terminated" ]]; then
+    memr=$(grep -E '^Memory size' pci_devices/prtconf-v.out | awk '{print $3}')
+    mem=$(( $memr / 1024 + 1 ))
+    echo "Memory Size = $mem GB"
+else 
+    echo "* Warning: problem with Collector data, we failed to determine system memory" 
+fi
+
+if [[ $(echo $dumpd|awk -F= '{print $2}') != 'swap' ]]; then
+    dumpr=$(grep -E 'syspool/dump +volsize ' zfs/zfs-get-p-all.out | awk '{print $3}')
+    if [[ $dumpr ]]; then
+        dump=$(( $dumpr / 1024 ** 3 + 1 ))
+        echo "Dump Size   = $dump GB"
+        if [[ $dump ]]; then
+            if [[ $(( $dump * 2 )) -lt $mem ]]; then
+                echo "* Dump should be at least $(( $mem / 2 )) GB"
+            fi
+        fi
+    fi
+fi
+
+swapr=$(grep swap zfs/zfs-get-p-all.out | grep volsize | awk '{print $3}')
+swap=$(( $swapr / 1024 ** 3 ))
+echo "Swap Size   = $swap GB"
+if [[ $swap ]]; then
+    if [[ $mem -lt 8 ]]; then
+        if [[ $swap -lt 1 ]]; then
+            echo "* Swap should be at least 1 GB"
+        fi
+    elif [[ $mem -lt 16 ]]; then
+        if [[ $swap -lt 2 ]]; then
+            echo "* Swap should be at least 2 GB"
+        fi
+    elif [[ $mem -le 128 ]]; then
+        if [[ $swap -lt 4 ]]; then
+            echo "* Swap should be at least 4 GB"
+        fi
+    elif [[ $mem -gt 128 ]]; then
+        if [[ $(( $swap * 4 )) -lt $mem ]]; then
+            echo "* Swap should be at least $(( $mem / 4 )) GB"
+        fi
+    fi
+fi
+
+dumpd=$(grep -e '^DUMPADM_DEVICE' kernel/dumpadm.conf)
+echo ""
+echo $dumpd
+
+# TODO the bytes -> MB/GB/byte stuff should be turned into a function for reuse. 
+if [[ $long_output ]]; then
+    printf "\n===== ARC =====\n"
+    # Output the current ARC size, target, max and min
+    mapfile -t arcstats < <(egrep "zfs:0:arcstats:(c|p|size)" kernel/kstat-p-td-10-6.out | egrep -v "fetch|time|class" | tail -5 | awk '{print $2}')
+    if [[ ${arcstats[0]} -lt 1073741824 ]]; then
+        arc_target_size="$(echo ${arcstats[0]} /1024/1024 | bc) MB"
+    else
+        arc_target_size="$(echo ${arcstats[0]} /1024/1024/1024 | bc) GB"
+    fi
+    if [[ ${arcstats[0]} -lt 1073741824 ]]; then
+        arc_max_size="$(echo ${arcstats[1]} /1024/1024 | bc) MB"
+    else
+        arc_max_size="$(echo ${arcstats[1]} /1024/1024/1024 | bc) GB"
+    fi
+    if [[ ${arcstats[0]} -lt 1073741824 ]]; then
+        arc_min_size="$(echo ${arcstats[2]} /1024/1024 | bc) MB"
+    else
+        arc_min_size="$(echo ${arcstats[2]} /1024/1024/1024 | bc) GB"
+    fi
+    #arc_mru_size=$(echo ${arcstats[3]} /1024/1024/1024 | bc) # size in GB
+    if [[ ${arcstats[4]} -lt 1073741824 ]]; then
+        arc_size_size="$(echo ${arcstats[4]} /1024/1024 | bc) MB"
+    else
+        arc_size_size="$(echo ${arcstats[4]} /1024/1024/1024 | bc) GB"
+    fi
+
+    echo "ARC Target Size  (arcstats:c)     = $arc_target_size"
+    echo "ARC Max Size     (arcstats:c_max) = $arc_max_size"
+    echo "ARC Min Size     (arcstats:c_min) = $arc_min_size"
+    echo "ARC Current Size (arcstats:size)  = $arc_size_size"
+    echo ""
+fi
+
+if [[ ($arc_max = "0") ]]; then
+    printf "* Warning: zfs_arc_max is not set. This is potentially dangerous as we can overrun system processes. See: NEX-1760, NEX-6611\n" 
+fi
+# TODO arc_max detection is wrong, also need to determine overhead related to NEX-1760/NEX-6611
+if [[ ! ($arc_max = "0") ]]; then
+    printf "\n* zfs_arc_max is set in /etc/system.\n"
+    echo "zfs_arc_max = $arc_max GB"
+fi
+
+#echo "limit_num: $arc_meta_limit_num"
+#echo "used_num: $arc_meta_used_num"
+# Task: verify whether ARC and metadata utilization are within acceptable thresholds
+if [[ $arc_meta_limit_num -lt $arc_meta_used_num ]]; then 
+    perf_req 'ARC metadata currently used exceeds the limit. Recommendation: Increase arc_meta_limit up to 60% of arc_max to allow headroom.'
+    pweight=$(echo $pweight - 2 | bc )
+elif [[ $arc_meta_use_num -gt $(echo "scale=3;$arc_meta_limit_num * 0.9" | bc |  sed -e 's/\..*//') ]]; then
+    perf_req 'ARC metadata use is currently within 10\% of arc_meta_limit. Recommendation: incrase arc_meta_limit up to as much as 60\% of arc_max to allow headroom.'
+    pweight=$(echo $pweight - 1 | bc )
+fi
+if [[ $arc_meta_max_num -gt $(echo "scale=3;$arc_meta_limit_num * 1.2" | bc | sed -e 's/\..*//') ]]; then 
+    perf_req 'ARC metadata has exceeded its limit at some point in the past by a significant margin of over 20%. Recommendation: reduce aggressive periodically run storage jobs.'
+    pweight=$(echo $pweight - 1 | bc )
+elif [[ $arc_meta_max_num -gt $arc_meta_limit_num ]]; then
+    perf_req 'Note: ARC metadata has exceeded the limit at some point since boot. This may be indicative of impending or historic performance issues.'
+fi
+if [[ $(grep zfs_arc_meta_limit kernel/system) ]]; then
+    arc_meta_limit_setting=$(echo $(grep zfs_arc_meta_limit kernel/system | awk '{print $4}') /1024/1024/1024 | bc) #in GB
+else
+    arc_meta_limit_setting=0
+fi
+if [[ $arc_meta_limit_setting -ne 0 ]]; then
+    printf "\n* zfs_arc_meta_limit is set in /etc/system.\n"
+    echo "zfs_arc_meta_limit = $arc_meta_limit_setting GB"
+fi
+echo ""
+echo "$arc_meta_used"
+echo "$arc_meta_limit"
+echo "$arc_meta_max"
+echo ""
+# Task: determine the results of the autosac SAC failover verification script 
+echo "===== SAC Status Detection ====="
+    # TODO if autosac date was within a day or two, perform verification of autosac results
+    # this may be black magic
+    # autosac by wkettler started being used around April 8, 2015. Any system installed prior to this isn't likely to have had auto-sac run.
+if [[ -e "go-live/nexenta-autosac.log" ]]; then
+    echo
+    echo "* Auto-SAC was run at some point." # TODO make this actually look up collector for sac, possibly other info
+    echo
+else 
+    echo 
+    echo "* Unable to detect SAC status. If SAC was performed, it predated the current SAC."
+    echo
+fi
+# Disk models
+# TODO we want to do some sort of detection of the type of disk as it may become more of a factor re: SSDs, eg. nocacheflush
+# Task: Determine whether the storage devices (HBAs, drives) used is of a supportable type, quantity, and quality
+echo "===== Disk Models ====="
+#grep -E '^(vendor|product|revision)' disk/hddisco.out | perl -pe '/^(vendor|product)/ && s/\n/,/s' | sort | uniq -c
+grep -E '^(vendor|product|revision)' disk/hddisco.out | perl -pe '/^(vendor|product|revision)/ && s/\n/,/s' | sed -e 's/vendor/\n/g' | sed '/^$/d' | sed -e 's/,$//' | sort | uniq -c
+
+is_sata=$(grep ATA disk/iostat-en.out | wc -l)
+if [[ $is_sata -gt 0 ]]; then
+   echo ""
+   echo "===== SATA disks detected ====="
+   echo "$is_sata SATA disks are installed"
+fi
+
+
+# TODO perhaps some magic to find out which disks/jbods are hanging off which HBAs, or which are unused.
+echo ""
+echo "===== SAS HBAs ===="
+# TODO want to read this into an array but perhaps not necessary
+grep -E '^(HBA|    Model|    Firmware Version)' hbas/sasinfo-hba-v.out
+
+hba_ir_present=$(grep Model.*IR hbas/sasinfo-hba-v.out | wc -l)
+if [[ $hba_ir_present -gt "0" ]]; then 
+    echo "* Warning! IR firmware is present but not supported!"
+    perf_req "IR HBA firmware is present but not supported. It can cause performance problems due to spurious interrupts."
+fi
+
+# TODO need to more clearly define what it is we're testing for the MegaRAID controllers
+
+if [[ $(grep mr_sas disk/hddisco.out | wc -l) -gt "2" ]]; then 
+    printf "\t* mr_sas in use on this system on non-syspool drives.\n"
+    mr_sas_lsidriver=$(grep driver-storage-mr-sas-nexenta system/dpkg-l.out)
+    if [[ $mr_sas_lsidriver = "" ]]; then 
+        printf "\t* However, the correct LSI/Nexenta driver is not in use!\n"
+        perf_req "The Nexenta driver-storage-mr-sas-nexenta package must be installed for proper performance with mr_sas."
+    else 
+        printf "\t* driver-storage-mr-sas-nexenta is in use.\n"
+    fi
+fi 
+if [[ $(grep Initiator hbas/fcinfo-hba-port-l.out) ]]; then 
+    echo
+    echo "==== FC HBAs ===="
+    grep -E '(HBA Port|Model|Firmware|State)' hbas/fcinfo-hba-port-l.out
+fi
+echo
+# Task: qualify the pool configuration as supportable
+echo "==== Configured pool filesystems/volumes ===="
+echo
+
+aluaenabled=$(grep "ALUA Status" comstar/stmfadm-list-state.out | awk '{print $4}')
+if [[ $aluaenabled == "enabled" ]]; then
+    printf "\t** WARNING: ALUA is enabled.**\n\tCheck to make sure there are no iSCSI mappings.\n\tALUA and iSCSI are incompatible\n"
+    echo ""
+fi
+
+poolpresent=$(egrep -v "^NAME|^syspool" zfs/zpool-list-o-all.out | awk {'print $1'})
+poolcount=$(echo $poolpresent | wc -w) 
+if [[ "$poolcount" -gt "1" ]]; then
+    echo "* There are $poolcount data pools present on this system!"
+    echo
+#    echo "$poolpresent" not modifying this variable as its used later/in a different fashion
+    awk {'print $1"\t" $2"\t"$3'} zfs/zpool-list-o-all.out | grep -v syspool 
+    echo
+    perf_req "There is more than 1 pool on this system. This is sub-optimal for ARC metadata performance. Please move a pool to the other node, if appropriate, to balance workload."
+    pweight=$(echo $pweight - 1 | bc )
+elif [[ $poolcount -eq "1" ]]; then 
+    # don't bother with these tests if there's more than 1 pool imported (for the time being, may change later)
+    # pool_create_date=$(grep "zpool create" zfs/zpool-history-il.out | grep $poolpresent | cut -f 1 -d ".") # doesn't work if the pool's been renamed
+    pool_create_date=$(grep "zpool create" zfs/zpool-history-il.out | grep -v syspool | cut -f 1 -d ".") 
+
+    awk {'print $1"\t" $2"\t"$3'} zfs/zpool-list-o-all.out | grep -v syspool 
+    echo "Created $pool_create_date"
+    echo
+# TODO sed instead of perl    vdev_count_mirror=$(sed -n '/\$poolpresent/,/\(^$\|logs\|spares\|cache\)/p' zfs/zpool-status-dv.out | grep c[0-9] | wc -l)
+# TODO also I think we fall on the syspool vdevs with the mirror test
+    if [[ -e zfs/echo-spa-c-mdb-k.out ]]; then
+        vdev_count_mirror=$(perl -00ne 'if ($_ =~ /$poolpresent/) {chomp($_); printf "%s\n",$_}' zfs/echo-spa-c-mdb-k.out | grep "mirror" |wc -l)
+        vdev_count_raidz=$(perl -00ne 'if ($_ =~ /$poolpresent/) {chomp($_); printf "%s\n",$_}' zfs/echo-spa-c-mdb-k.out | grep "raidz" |wc -l)
+    else 
+        echo "* Very old version of Collector, no ::spa output."
+    fi
+    if [[ $vdev_count_mirror -gt "0" && $vdev_count_raidz -gt "0" ]]; then
+        echo "* There are both RAIDZ and mirrored vdevs!"
+    fi
+    if [[ $vdev_count_mirror -gt "0" ]]; then 
+        echo "* $vdev_count_mirror mirrored vdevs"
+    fi
+    if [[ $vdev_count_raidz -gt "0" ]]; then 
+        echo "* $vdev_count_raidz raidz vdevs"
+    fi
+    zil=$(sed -n '/logs/,/\(^$\|spares\|cache\)/p' zfs/zpool-status-dv.out | grep c[0-9] | awk '{print $1}')
+    zil_present=$(sed -n '/logs/,/\(^$\|spares\|cache\)/p' zfs/zpool-status-dv.out | grep c[0-9] | awk '{print $1}' | wc -l)
+    zil_present_mirror=$(sed -n '/logs/,/\(^$\|spares\|cache\)/p' zfs/zpool-status-dv.out | grep mirror | wc -l)
+    if [[ $zil_present =~ ^\d*[02468]$ ]]; then
+        echo "* $zil_present log drives in $zil_present_mirror mirrors"
+    elif [[ $zil_present -eq "1" ]]; then
+        echo "* Severe warning! Un-mirrored ZIL present! See: NEX-2940, NEX-4523"
+    else 
+        echo "* no ZIL present"
+    fi
+    cache=$(sed -n '/cache/,/\(^$\|spares\)/p' zfs/zpool-status-dv.out | grep c[0-9] | awk '{print $1}')
+    cache_present=$(sed -n '/logs/,/\(^$\|spares\|cache\)/p' zfs/zpool-status-dv.out | grep c[0-9] | awk '{print $1}' | wc -l)
+    if [[ $cache_present -gt "0" ]]; then
+        echo "* $cache_present cache drives"
+    fi
+    hb_disks_to_check="$zil $cache"
+    for i in $hb_disks_to_check; do
+        hb_true=$(grep $i plugins/opthacrsf-1binrsfcli-i0-stat.out)
+        if [[ $hb_true ]]; then
+            bad_hb="$bad_hb $i"
+        fi
+        hb_true=""
+    done
+    if [[ $bad_hb ]]; then
+        printf "\n* Severe warning! The following disks are configured as HA heartbeat disks and are ZIL/cache devices.\n\t$bad_hb\n"
+    fi
+else
+    echo "NOTE: no data pools currently imported!"
+fi
+# Task: determine existence of multiple pools on the system
+if [[ $poolcount > 0 ]]; then
+    snap_count=$(grep "type.*snapshot" zfs/zfs-get-p-all.out  | wc -l)
+    if [[ $snap_count -gt "500" ]]; then
+        printf "* There are $snap_count snapshots! Please consider disabling the check runners to decrease impact this will have on NMS.\n"
+    fi
+    if [[ $snap_count -gt "1500" ]]; then
+        perf_req "$snap_count snapshots present is enough to degrade system performance. Recommendation: analyze snapshot retention policy." 
+        pweight=$(echo $pweight +1 | bc )
+    fi
+    echo
+    echo "Pool Block/Record Sizes:"
+    egrep "blocksize|recordsize" zfs/zfs-get-p-all.out | grep -v syspool |  awk '{print $3}' | sort | uniq -c
+fi
+# Task: use of unacceptable or performance-degrading tunables 
+primary_cache_none=$(grep primarycache.*none zfs/zfs-get-p-all.out | grep -v @ | awk {'print $1'})
+if [[ $primary_cache_none != "" ]]; then
+    printf "\t* primarycache is set to \'$primary_cache_none\'!\n"
+    perf_req "Primary cache set to 'none' effectively disables ZIL and ARC! Performance will not be good. Please remedy."
+    pweight=$(echo $pweight - 1 | bc )
+fi
+primary_cache_meta=$(grep primarycache.*metadata zfs/zfs-get-p-all.out | grep -v @ | awk {'print $1'})
+if [[ $primary_cache_meta != "" ]]; then
+    printf "\t * primarycache is set to \'primary_cache_meta\'!\n"
+    perf_req "Primary cache set to 'metadata' effectively disable ARC for non-ZIL ! Performance will not be good. Please remedy."
+    pweight=$(echo $pweight - 1 | bc )
+fi
+# Task: determine whether the pool is unacceptably full 
+poolfull=$(grep "[6-9][0-9]%" zfs/zpool-list-o-all.out | grep -v syspool | awk '{print $1"\t"$2"\t" $3}')
+if [[ $poolfull ]]; then 
+    echo ""
+    echo "Pool capacity exceeds recommendation for best performance:"
+    echo $poolfull
+    perf_req "Pool capacity recommended capacity for optimal performance. Recommendation: capacity should should be kept at around 50-65% maximum: $poolfull"
+    pweight=$(echo $pweight - 1 | bc )
+fi
+if [[ $(echo $poolfull | awk {'print $3'} | sed -e 's/\%//') -gt "80" ]]; then
+    perf_req 'Warning: Pool capacity exceeds 80%. Pool capacity must be under 80% to run Sparta.'
+    pweight=$(echo $pweight - 2 | bc )
+fi
+# Task: check for existence of legacy drivers/drives
+# PERF TODO - if there are mixed blocksizes, it should count as a positive weight for running Sparta
+# TODO spiff up disk output, perhaps to indicate those classed as SSD or specific disks known to be crap, and do appropriate disk checks later as a result
+if [[ $(grep cmdk disk/hddisco.out | wc -l) -ne "0" ]]; then
+    echo
+    echo "cmdk disk driver present!"
+fi
+if [[ $poolcount > "0" ]]; then 
+    echo "=== Service Summary ==="
+    echo
+fi
+# SMB/CIFS, NFS, and iSCSI specifics
+pool_vol=$(grep "type.*volume" zfs/zfs-get-p-all.out | grep -v syspool | wc -l)
+pool_smb=$(grep sharesmb zfs/zfs-get-p-all.out | grep -v "sharesmb *off" | grep -v syspool | wc -l)
+pool_nfs=$(grep sharenfs zfs/zfs-get-p-all.out | grep -v "sharenfs *off" | grep -v syspool | wc -l)
+
+# Task: general workload summarization of services and client connectivity for CIFS 
+if [[ $pool_smb -gt 0 ]]; then 
+    printf " * SMB filesystems: $pool_smb\n"
+    smb_workers_cur=$(grep smb_workers appliance/echo-taskq-mdb-k.out  | awk {'print $3'} | cut -f 1 -d "/")
+    smb_workers_hwat=$(grep smb_workers appliance/echo-taskq-mdb-k.out  | awk {'print $4'})
+    smb_workers_max=$(grep max_workers cifs/sharectl-get-smb.out | cut -f 2 -d "=")
+    printf "\t * $smb_workers_cur current SMB workers \n"
+    printf "\t * $smb_workers_hwat high water SMB workers \n"
+    if [[ "$smb_workers_hwat" -gt "$smb_workers_max" ]]; then
+        printf "\t * $smb_workers_hwat exceeds configured dynamic maximum server availability, consider adjusting."
+    elif [[ $smb_workers_cur -gt $(echo "scale=3;$smb_workers_max * 0.8" | bc | sed -e 's/\..*//')  ]]; then
+        printf "\t * $smb_workers_cur/$smb_workers_max configured dynamic workers in use, consider increasing smb_workers.\n"
+    fi
+fi
+
+# Task: general workload summarization of services and client connectivity for iSCSI
+#iscsi checks
+if [[ $pool_vol -gt 0 ]]; then
+    echo
+    echo " * Block volumes: $pool_vol"
+    lu_count=$(grep '/' comstar/sbdadm-list-lu.out | wc -l) 
+    if [[ $lu_count -gt "0" ]]; then
+        printf "\t* $lu_count LU configured\n"
+    else 
+        printf "\t* NO LU configured\n"
+    fi
+    initiator_iscsi_count=$(grep Initiator comstar/stmfadm-list-target-v.out | grep -v wwn | sort | uniq -c | wc -l)
+    initiator_fc_count=$(grep Initiator comstar/stmfadm-list-target-v.out | grep wwn | sort | uniq -c | wc -l)
+    case $initiator_iscsi_count in
+    0) 
+        printf "\t* There are no iSCSI initiators configured in hostgroups.\n"
+        ;;
+    *)
+        printf "\t* Unique iSCSI initiators: $initiator_iscsi_count\n"
+        ;;
+    esac
+    if [[ initiator_fc_count -gt "0" ]] ; then 
+        printf "\t* Unique FC initiators: $initiator_fc_count\n"
+    fi
+    fc_hba_init=$(grep "Initiator" hbas/fcinfo-hba-port-l.out | sort | uniq -c | wc -l)
+    fc_hba_target=$(grep "Target" hbas/fcinfo-hba-port-l.out | sort | uniq -c | wc -l)
+    if [[ $fc_hba_init -gt "0" ]]; then
+        printf "\t* $fc_hba_init fibrechannel HBA initiator in use.\n"
+    fi
+    if [[ $fc_hba_target -gt "0" ]]; then
+        printf "\t* $fc_hba_target fibrechannel HBA target in use.\n"
+    fi
+else
+    echo "* No block volumes configigured (iSCSI/FC)."  
+fi
+# Task: general workload summarization of services and client connectivity for NFS
+# nfs checks
+if [[ $pool_nfs -gt 0 ]]; then
+    echo
+    echo " * NFS filesystems: $pool_nfs"
+    nfsshares=$(grep -v "export" nfs/showmount-a-e.out | cut -f 1 -d :  | sort | uniq | grep -v "/" | wc -l)
+#    nfsshares=$(grep -v "export" nfs/showmount-a-e.out | cut -f 2 -d :  | sort | uniq -c | grep -v "/" | wc -l)
+    nfs_servers=$(grep ^servers= nfs/sharectl-get-nfs.out | cut -f 2 -d =)
+    nfs_lockd=$(grep ^lockd_servers= nfs/sharectl-get-nfs.out | cut -f 2 -d =)
+    nfsmaxver=$(grep server_versmax nfs/sharectl-get-nfs.out | cut -f 2 -d =)
+    nfs4calls=$(grep -A2 "Server NFSv4" nfs/nfsstat-s.out | grep ^[0-9] | awk {'print $1'})
+    nfs4_delegation=$(grep server_delegation nfs/sharectl-get-nfs.out)
+    printf "\t* Unique NFSv3 clients connected (does not include v4): $nfsshares\n"
+    printf "\t* nfs servers=$nfs_servers\n"
+    printf "\t* lockd_servers=$nfs_lockd\n"
+    if [[ ($nfsmaxver -eq "4") && ($nfs4calls -gt "0") ]]; then
+        printf "\t* Caution: NFSv4 enabled and in use: $nfs4calls total NFSv4 calls.\n"
+        if [[ $nfs4_delegation -eq "nfs_delegation=on" ]]; then
+            printf "\t* NFSv4 delegation is enabled (OK in most situations).\n"
+        else
+            printf "\t* NFSv4 delegation is disabled.\n"
+        fi
+    fi
+    if [[ $(grep rpcmod */system) ]] ; then
+        printf "\t* rpcmod /etc/system entries present.\n"
+    fi
+    echo 
+fi
+# Task: summarization of configured and functional auto-sync jobs
+services_autosync=$(grep "status" services/nmc-c-show-auto-sync-v.out | egrep "online|maint")
+services_autosync_count=$(grep "status" services/nmc-c-show-auto-sync-v.out | egrep "online|maint" | wc -l | awk {'print $1'})
+if [[ $services_autosync_count -gt "0" ]]; then 
+    if [[ $long_output ]]; then
+        printf "* $services_autosync_count Auto-Sync services running/configured and 'online':\n"
+        egrep -B10 online services/nmc-c-show-auto-sync-v.out | grep instance | cut -f 2 -d ":"
+    else 
+        printf "* $services_autosync_count Auto-Sync jobs configured\n"
+    fi
+    echo
+else 
+    echo
+    echo "* no auto-sync configured."
+fi
+services_autosnap=$(egrep "auto-snap" services/svcs-a.out | egrep "online|maint" | awk {'print $3'})
+services_autosnap_count=$(egrep "auto-snap" services/svcs-a.out | egrep "online|maint" | awk {'print $3'} | wc -l )
+if [[ $services_autosnap_count -gt "0" ]]; then 
+    if [[ $long_output ]]; then
+        printf "* $services_autosnap_count Auto-Snap services running/configured and 'online':\n"
+        printf "services_autosnap"
+    else 
+        printf "* $services_autosnap_count Auto-Snap jobs configured\n"
+    fi
+    echo
+else 
+    echo
+    echo "* no Auto-Snap configured."
+fi
+# Task: check for any additional services configured for future record keeping
+services_other=$(egrep "rsync|ndmp|ldap|nis|ftp" services/svcs-a.out | egrep "online|maint") 
+services_other_count=$(egrep "rsync|ndmp|ldap|nis|ftp" services/svcs-a.out | egrep "online|maint" | wc -l | awk {'print $1'}) 
+# Task: check for any additional services configured for future record keeping
+services_other=$(egrep "rsync|ndmp|ldap|nis|ftp" services/svcs-a.out | egrep "online|maint") 
+services_other_count=$(egrep "rsync|ndmp|ldap|nis|ftp" services/svcs-a.out | egrep "online|maint" | wc -l | awk {'print $1'}) 
+if [[ $services_other_count -gt "0"  ]]; then 
+    echo
+    echo "* $services_other_count other notable services running/configured:"
+    printf "$services_other"
+    echo
+fi
+# Task: verify cluster state is operational and we have data from both nodes  
+cluster_state=$(grep configured plugins/opthacrsf-1binrsfcli-i0-stat.out)
+if [[ $cluster_state ]]; then
+    echo
+    echo "=== HA Cluster State ==="
+    printf "$cluster_state\n"
+    echo
+    echo "Checking for other node Collector..." 
+    # listcol only checks the first 10 matches.
+    chost_rsf_service_name=$(grep "^0 Service" plugins/opthacrsf-1binrsfcli-i0-stat.out | awk '{print $3}' | sed -s 's/,//')
+    
+    chost_other=$(grep Host plugins/opthacrsf-1binrsfcli-i0-stat.out |  awk {'print $2'} | sed 's/.*/\L&/' | sed "/^$my_hostname$/d")
+    chost_other_col_list=$(listcol -c=collector-${my_license_type}.*${chost_other} -t=5)
+    for i in $(echo $chost_other_col_list);do
+        chost_other_rsf_temp_service_name=$(grep "^0 Service" $i/plugins/opthacrsf-1binrsfcli-i0-stat.out | awk '{print $3}' | sed -s 's/,//')
+        if [ $chost_rsf_service_name == $chost_other_rsf_temp_service_name ]; then
+            chost_other_rsf_service_name=$chost_other_rsf_temp_service_name
+            chost_other_col=$i
+            break
+        fi
+    done
+    if [[ ! -z $chost_other_col ]]; then
+        echo "Collector for other node $chost_other: "
+        echo $chost_other_col
+        echo
+    else 
+        echo "Warning: no Collector found for other node $chost_other ($chost_other_col)"
+        echo
+    fi
+else 
+    echo
+    echo "*** System is NOT a part of a cluster."
+    echo
+fi
+# Task: verify c-states are disabled
+echo "=== Misc. Issues ==="
+CSTATE=0
+for i in $(grep supported_max_cstates kernel/kstat-p-td-10-6.out | awk '{print $2}'); do
+    if [[ $i -gt  1 ]]; then
+       if [[ $i -gt $CSTATE ]]; then
+           CSTATE=$i
+       fi
+    fi
+done
+if [[ $CSTATE -gt 0 ]]; then
+    echo
+    echo "* Deep C-STATES are enabled: max_cstate = $CSTATE!"
+    echo 
+fi
+
+CPUPM=$(grep cpupm_enabled kernel/modparams.out | awk '{print $2}')
+if [[ $CPUPM -ne 0 ]]; then
+    echo
+    echo "* CPU Power Management is enabled: cpupm_enabled = $CPUPM!"
+    echo 
+fi
+
+# Task: verify lack of FMA faults
+fmadmfaulty_cnt=$(grep -A2 TIME fma/fmadm-faulty.out | egrep -v "^TIME|^-" | wc -l)
+if [[ $fmadmfaulty_cnt > 0 ]]; then
+    ###if [[ $my_date ]]; then
+        echo "* fmadm faulty has $fmadmfaulty_cnt entries!"
+        grep -A2 TIME fma/fmadm-faulty.out | egrep -v "^TIME|^-"
+        ###for i in {0..6};do
+            ###collector_date=$(date --date="$my_date -${i} day" +"%b %d")
+            ###grep -A2 TIME fma/fmadm-faulty.out | egrep -v "^TIME|^-" | grep "$collector_date" | grep -v " $(date --date="-1 year" +%Y) | $(date --date="-2 years" +%Y) | $(date --date="-3 years" +%Y) | $(date --date="-4 years" +%Y) | $(date --date="-5 years" +%Y) "
+        ###done
+        ###echo
+    ###else
+        #fmadmfaulty=$(grep -A2 TIME fma/fmadm-faulty.out | egrep -v "^TIME|^-" | head -n3)
+        ###echo "* fmadm faulty has $fmadmfaulty_cnt entries! Three most recent:"
+        #printf "$fmadmfaulty"
+        ###grep -A2 TIME fma/fmadm-faulty.out | egrep -v "^TIME|^-" | head -n3
+        ###echo
+    ###fi
+fi
+# Check retire_store for obvious entries
+if [[ -s fma/retire_store ]]; then
+    retire_store_cnt=$(strings fma/retire_store | egrep -v rio | wc -l)
+    if [[ $retire_store_cnt > 0 ]]; then
+            echo "* retire_store has $retire_store_cnt entries!"
+            strings fma/retire_store | egrep -v rio
+    fi
+fi
+# Task: verify lack of presence of DDT 
+ddt=$(grep "DDT.*on disk" zfs/zpool-status-dv.out)
+if [[ $ddt ]]; then
+    echo "DDT present!"
+    pweight=$(echo $pweight + 1 | bc ) # will probably need to demonstrate to user observable negative performance
+    perf_req 'DDT present! Recommendation: migrate data from volumes with DDT and recreate. DDT has a marked negative metadata performance.'
+    salt=$((RANDOM%999+1))
+    grep "DDT.*on disk" zfs/zpool-status-dv.out > /tmp/ddt_$salt.out
+    while read dedupe; do
+        echo $dedupe
+        entries=($(echo $dedupe | sed -e 's/.*DDT entries \([0-9]*\), size \([0-9]*\) on disk, \([0-9]*\) in core/\1 \2 \3/'))
+        ddt_disk=$((${entries[1]}*${entries[0]}/1024/1024))
+        ddt_memory=$((${entries[2]}*${entries[0]}/1024/1024))
+        echo DDT table size: $ddt_disk MB on disk
+        echo DDT table size: $ddt_memory MB in memory
+    done < <(cat /tmp/ddt_$salt.out)
+    rm /tmp/ddt_$salt.out
+fi
+# Task: verify pool is healthy 
+degraded=$(egrep "DEGRADED|FAULT|OFFLINE|UNKN" zfs/zpool-list-o-all.out)
+if [[ $degraded ]]; then 
+    echo 
+    echo "Pool in degraded state: "
+    echo $degraded 
+    ppweight=$(echo $pweight - 3 | bc ) 
+    perf_req 'Pool is in a degraded state. This must be corrected before Sparta can be run.'
+    echo
+fi
+zpool_prob=$(egrep "DEGRADE|OFFLINE|UNAVAIL" zfs/zpool-status-dv.out | sed -e 's/.*\(c[0-9]\+t[0-9A-Za-z]\+d[0-9]\+\).*/\1/')
+if [[ $zpool_prob ]]; then 
+    echo "" 
+    echo "Problems with the pool disks!"
+    pweight=$(echo $pweight - 1 | bc )
+    printf "$zpool_prob\n"
+fi
+# Task: verify the lack of any recent kernel panics 
+panic_recent=$(grep -A1 "reboot after panic" kernel/messages | sed -e 's/savecore.*]//g' -e 's/reboot after //g')
+if [[ $panic_recent != "" ]]; then 
+    printf "\n* WARNING! Recent system panics have occurred, please verify these are not important!\n"
+    printf "$panic_recent\n"
+fi
+# Task: verify SMART is disabled on all drives 
+smart_present=$(grep smart appliance/nmc-c-show-appliance-runners.out | grep enabled)
+if [[ $smart_present ]]; then 
+    echo "" 
+    echo "SMART is enabled and should not be!"
+    printf "$smart_present\n"
+fi
+smart_count=$(grep Enabled disk/nmc-c-show-lun-smartstat.out | grep -v GUID | wc -l)
+if [[ $smart_count ]]; then 
+    if [[ $smart_count -gt 0 ]]; then
+        echo "SMART enabled on $smart_count disks."
+        echo
+    fi
+fi
+# Task: verify lack of DNLC excess 
+# dnlc check independent of cifs or nfs, as its pertinent to all filesystem access (eg. rsync)
+dnlc_hits=$(grep "dnlcstats:hits" kernel/kstat-p-td-10-6.out | tail -n1 | awk '{print $2}')
+dnlc_misses=$(grep "dnlcstats:misses" kernel/kstat-p-td-10-6.out |tail -n1 | awk '{print $2}')
+dnlc_missrate=$(echo "scale=3;$dnlc_misses / $dnlc_hits*100" | bc | sed -e 's/\..*//')
+# unjustified presumption we need to prepopulate somewhat
+if [[ $dnlc_misses -gt "1000" && $dnlc_missrate -gt "20" ]]; then
+    echo
+    echo "* DNLC miss/hit ratio of: $dnlc_missrate% (consider running Sparta or incrasing ncsize if this is high)."
+else 
+    echo "* No significantly low hit ratio for DNLC." 
+fi
+
+# Task: verify scrub is not running (indicative of recent failure)
+scrub_running=$(grep progress zfs/zpool-status-dv.out)
+if [[ $scrub_running ]]; then
+    echo 
+    echo "Pool scrub in progress!"
+    perf_req "Scrub should not be running during Sparta. Recommendation: stop the scrub or allow it to complete prior to running Sparta."
+    pweight=$(echo $pweight - 2 | bc)
+    echo $scrub_running
+    echo
+fi
+# Task: verify lack of offline drive paths
+path_offline=$(grep -A1 OFFLINE disk/hddisco.out)
+if [[ $path_offline ]]; then
+    echo ""
+    echo "Disk paths are offline!"
+    printf "$path_offline\n"
+fi
+# Task: verify lack of offline storage ports 
+port_offline=$(grep State hbas/sasinfo-expander-tv.out| grep -v online)
+if [[ $port_offline ]]; then 
+    echo ""
+    echo "* Controller ports are offline!"
+    printf "$port_offline\n"
+fi
+# network checks 
+# Task: verify the lack of duplicitous network routes 
+# TODO - this falsely detects positives. possible duplicate subnets - crude and evil but it needs to be tested for 
+net_duplicate=$(grep "^[a-zA-Z0-9]\+\: " network/ifconfig-a.out -A1 | grep broadcast | awk '{print $6}' | sort | uniq -c | awk '{print $1}' | sort | head -n1)
+if [[ $net_duplicate -gt "1" ]]; then
+    printf "* Duplicate broadcast networks detected!\n"
+fi
+net_dupe_possible=$(grep "^[a-zA-Z0-9]\+\: " network/ifconfig-a.out -A1 | grep broadcast | awk '{print $6}' | awk -F "." '{print $1 $2 $3 $4}' | sort | uniq -c | awk '{print $1}' | sort | head -n1)
+if [[ $net_dupe_possible -gt "1" ]]; then
+    echo
+    printf "* Possible overlapping subnets detected. Check ifconfig.\n"
+    echo
+fi
+# Task: verify consistent -configured- MTU on interfaces and vlans, lack of network errors 
+# TODO inconsistent MTU 
+# TODO netstat Errs 
+# TODO netstat DupAck
+# TODO netstat ipFragOKs, ipFragFails, ipRoutingDiscards
+# TODO ipInCksumErrs? 
+echo "=== Jira Issue Checks ==="
+# Task: Verify system is configured to mitigate for specific known issues (eg. hotfixes)
+#NEX-6532 check 
+nex6532=$(grep sharenfs zfs/zfs-get-p-all.out | egrep '((rw|ro|root)=|:)[0-9]' | awk '{print $3}')
+if [[ $(echo $nex6532 | awk '{print $1}') ]]; then
+    echo ""
+    echo "* Possible NEX-6532 candidate : $nex6532"
+fi
+# TODO do we want to have large segment offload (LSO) detection? and if so, how? 
+# kernel/kstat-p-td-10-6.out:tcp:0:tcpstat:tcp_lso_disabled       0 <-- disabled
+
+#echo
+#echo "=== Networking statistics overview ==="
+# netstat -s processing 
+#tcpOutDataSegs=$(grep tcpOutDataSegs network/netstat-s.out | cut -f 3 -d = ) 
+#tcpRetransSegs=$(grep tcpRetransSegs network/netstat-s.out |  cut -f 3 -d = )
+#retransRate=$(echo "scale=3;$tcpRetransSegs / $tcpOutDataSegs*100"  | bc | sed -e 's/\..*//')
+#echo "TCP: tcpRetransSegs: $tcpRetransSegs"
+#echo "TCP: tcpOutDataSegs: $tcpOutDataSegs"
+#echo "TCP: retransRate: $retransRate"
+#if [[ $retransRate -gt "5" ]]; then 
+#    echo "TCP retransmission rate of $retransRate%. "
+#    pweight=$(echo $pweight - 1 | bc )
+#    perf_req " TCP retransmission rate of $retransRate%! Typically, this should be under 5%. Recommendation: investigate validity of this metric (NEX-5292), and possible underlying switching and/or cabling cause via snoop and switch metrics."
+#    if [[ $retransRate -gt "20" ]]; then
+#        pweight=$(echo $pweight - 4 | bc )
+#        perf_req "Seriously, $retransRate%. Retransmission rate is over 20%! THIS IS NOTABLY EVIL, but may be an indication of an overloaded counter if the system has high uptime (NEX-5292)."
+#    fi
+#fi
+echo "=== Misc. messages issues ==="
+# Task: verify logs contain no known protocol/service errors or indication of misconfiguration
+messages_smb=$(egrep -i "ntp|smbd|idmap" kernel/messages | egrep -v "guest|share not found|IPC only")
+# TODO make this less stupid
+if [[ $messages_smb ]]; then
+    echo "" 
+    echo "* Possible SMB issues, see messages"
+    echo
+fi
+# Task: check system for indications of overprovisioning 
+messages_misc=$(egrep "cots|drive offline|DNS" kernel/messages)
+if [[ $messages_misc ]]; then 
+    echo "" 
+    echo "Other misc recent system messages of possible significance:"
+    printf "$messages\n"
+fi
+   # PERF TODO - perhaps investigate these and mitigate them before sparta run? neg weight
+# Task: check logs for presence of drive controller impacting issues
+mpt_sas=$(grep WARNING kernel/messages | grep "(mpt_sas" | cut -f 2 -d "(" | cut -f 1 -d ")" | less | sort | uniq -c)
+if [[ $mpt_sas ]]; then
+    perf_req "mpt_sas warnings in system messages. Recommendation: investigate problematic hardware."
+    pweight=$(echo $pweight - 1 | bc )
+    echo "" 
+    echo "mpt_sas related warnings in /var/adm/messages:"
+    printf "$mpt_sas\n"
+echo ""
+fi
+# TODO: check for ifaces on same subnet
+
+# Task: determine class and type of hardware faults, if any
+echo "=== Unique system errors and faults ==="
+# Task: see if FMD is broken first
+if [[ ! $(grep "/usr/lib/fm/fmd/fmd" system/ptree-a.out) ]]; then
+    echo "WARNING: fmd is not currently running!"
+fi
+echo
+mapfile -t errors < <(zgrep 'class = ' fma/fmdump-evt-30day.out.gz | sort | uniq -c)
+
+if [[ $(grep terminated fma/fmdump-evt-30day.stats) ]]; then
+    echo
+    echo "WARNING:"
+    echo "WARNING: fmdump terminated, all FMA data may not be present!"
+    echo "WARNING: Not processing FMA data until investigated."
+    echo "WARNING:"
+    echo
+    pweight=$(echo $pweight - 1 | bc )
+fi
+# this is arbitrary, fuzzy, and not likely to have been hit
+if [[ ${#errors[@]} -gt "500" ]]; then 
+    perf_req "Very high number of FMA events. Recommendation: mitigate underlying hardware issues before running Sparta."
+    pweight=$(echo $pweight - 2 | bc)
+elif [[ ${#errors[@]} -eq "0" ]]; then
+    echo "* Odd - we don't actually see any errors in fmdump."
+    echo
+fi
+unsummarized=()
+for error in "${errors[@]}" ; do
+
+    class=${error#*class = }
+    # TODO we really need to be markedly more alarmed about pciex/pci/fabric errors. 
+    case "$class" in
+	ereport.io.scsi.cmd.disk.tran | \
+	ereport.io.scsi.cmd.disk.dev.rqs.merr | \
+	ereport.io.scsi.cmd.disk.slow-io | \
+	ereport.io.pci.fabric) 
+            # This applies to other error classes as well so use fallthrough;
+	    echo "$error" | perl -pe 's/^ +//'
+	    #zgrep -A6 "class = ${class}" fma/fmdump-evt-30day.out.gz | grep device-path | sort | uniq -c | sort -n
+	    zgrep -A8 "class = ${class}" fma/fmdump-evt-30day.out.gz | grep device-path | sort | uniq -c | sort -n
+	    echo
+	    ;;
+#	ereport.io.scsi.cmd.disk.dev.rqs.derr)
+#            # TODO do something here so ereport.io.scsi.cmd.disk.dev.rqs.derr output does not include op-code 0x15
+#            zgrep -A12 "class = ${class}" fma/fmdump-evt-30day.out.gz | egrep "device-path|op-code" | grep -v -B1 "op-code = 0x15"
+#            ;; 
+	ereport.io.scsi.disk.predictive-failure)
+	    echo "$error" | perl -pe 's/^ +//'
+	    zgrep -A8 "class = ${class}" fma/fmdump-evt-30day.out.gz | grep serial | sort | uniq -c | sort -n
+	    echo
+	    ;;
+        ereport.io.scsi.cmd.disk.dev.rqs.derr)
+	    echo "$error" | perl -pe 's/^ +//'
+            DISKS=$(zgrep -A15 ereport.io.scsi.cmd.disk.dev.rqs.derr fma/fmdump-evt-30day.out.gz | grep device-path | awk -F@ '{print $NF}' | sort | uniq)
+            for disk in $(echo $DISKS); do
+                zgrep -A20 ereport.io.scsi.cmd.disk.dev.rqs.derr fma/fmdump-evt-30day.out.gz | grep $disk | uniq -c
+                if [[ $long_output ]]; then
+                    zgrep -A20 ereport.io.scsi.cmd.disk.dev.rqs.derr fma/fmdump-evt-30day.out.gz | grep $disk -A9 | grep op-code | sort | uniq -c
+                fi
+            done
+            echo
+            ;;
+        ereport.io.scsi.cmd.disk.dev.serr)
+	    echo "$error" | perl -pe 's/^ +//'
+            DISKS=$(zgrep -A15 ereport.io.scsi.cmd.disk.dev.serr fma/fmdump-evt-30day.out.gz | grep device-path | awk -F@ '{print $NF}' | sort | uniq)
+            for disk in $(echo $DISKS); do
+                zgrep -A20 ereport.io.scsi.cmd.disk.dev.serr fma/fmdump-evt-30day.out.gz | grep $disk | uniq -c
+                if [[ $long_output ]]; then
+                    zgrep -A20 ereport.io.scsi.cmd.disk.dev.serr fma/fmdump-evt-30day.out.gz | grep $disk -A11 | grep op-code | sort | uniq -c
+                fi
+            done
+            echo
+            ;;
+	ereport.fs.zfs.timeout | \
+	ereport.fs.zfs.checksum | \
+	ereport.fs.zfs.vdev.open_failed)
+	    echo "$error" | perl -pe 's/^ +//'
+	    zgrep -A16 "class = ${class}" fma/fmdump-evt-30day.out.gz | grep vdev_path | sort | uniq -c | sort -n
+	    echo
+	    ;;	    
+        
+        ereport.io.pciex.rc.ce-msg | \
+        ereport.io.pciex.pl.re | \
+        ereport.io.pciex.dl.bdllp)
+	    echo "$error" | perl -pe 's/^ +//'
+	    zgrep -B5 "class = ${class}" fma/fmdump-evt-30day.out.gz | grep device-path | sort | uniq -c | sort -n
+	    echo
+            ;;
+    	*)
+	    unsummarized+=("${error}")
+	    ;;
+    esac
+
+done
+
+if [[ ${#unsummarized[@]} -gt 0 ]] ; then
+    echo "The following error classes were not automatically summarized:"
+    printf "  %s\n" "${unsummarized[@]}"
+    echo 
+fi
+# Task: flag any potential performance issues 
+if [[ ${#perf_pre[@]} > "1" ]]; then 
+    echo "=== Sparta Performance Related Requirements/Notes ==="
+    #echo "The weighted likelihood that Sparta should be run is: TBD%"
+    #$(echo "scale=3; (20 - $pweight)*5 " |bc | sed -e 's/\..*//' )% "
+    echo
+    echo "These items must be addressed prior to running Sparta:"
+    echo
+    for ((i=1;i<${#perf_pre[@]};i++)); do
+        echo -e "  * ${perf_pre[$i]}"
+    done
+    echo
+fi

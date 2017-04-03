@@ -1,0 +1,3 @@
+#!/bin/bash
+
+nxcat.py --path=. --zpmode=verbose | tee nxcat.out

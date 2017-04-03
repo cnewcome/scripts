@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Writen by Chris Newcomer modified by Benjamin Hodgens
+# goes to Collector path or outputs collector's path
+# used by 'ingestpwd'
+# 2015-06-29 -- added some "smarts" to cpwd. You can now paste the whole filename with 9999.tar.gz on the end 
+#     and it will automatically strip it off
+# 2016-05-25 -- Newcomer -- added a check to display NS and collector versions automatically.
+# 2016-06-08 -- Newcomer -- added a line to remove fully qualified paths so it will still process them.
+# 2016-06-20 -- Newcomer -- changed passed parameters into cpwd to remove spaces and use it as one large input.
+
+prevpwd=$(pwd)
+if [[ ! -z $1 ]]; then
+    name=$(echo $* | sed -e 's/ //g' -e 's/.*\([GTP][P|0-9][0-9]\{2\}-.*-[0-9]\{2\}[A-Z]\+\).*$/\1/' -e 's/.*\(TRIA-.*-[0-9]\{2\}[A-Z]\+\).*$/\1/')
+    cdate=$(echo $name | awk -F_ '{print $3}' | sed -e 's/\(20[0-9]\{2\}-[0-1][0-9]-[0-3][0-9]\).*/\1/')
+    hname=$(echo $name | awk -F_ '{print $2}')
+    export c=$(echo ~/ingested/${cdate}/*$name*)
+    if [[ -e $c ]]; then
+        echo "$c"
+        cd "$c" && egrep "Appliance version|Run Stats" ${c}/collector.stats && if [ -e system/uptime.out ]; then cat system/uptime.out; fi && bash 
+    else
+        echo "$name is not ingested"
+    fi
+elif [[ ! -z $prevpwd ]]; then
+    cd $prevpwd
+fi

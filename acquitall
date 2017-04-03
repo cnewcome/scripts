@@ -1,0 +1,4 @@
+#!/bin/bash
+
+grep EVENT-ID fma/fmadm-faulty.out -A2 | grep ":" | awk '{print "fmadm acquit",$4}'
+

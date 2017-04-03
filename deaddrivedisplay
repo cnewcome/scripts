@@ -1,0 +1,2 @@
+#!/bin/bash
+for i in `cat zfs/zpool-status-dv.out | egrep 'UNAVAIL|FAULTED' | egrep -o 'c*t500.*' | awk '{print $1}' | sed s/d0s0/d0/`; do cat enclosures/nmc-c-show-lun-slotmap.out | grep $i; done

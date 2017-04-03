@@ -1,0 +1,27 @@
+#!/bin/bash
+
+IFS=$'\n'
+
+for i in $(cat $1)
+do
+	average=$(echo $i | awk '{print $6 "/" $8}' | bc -l)
+	echo $i Average miss rate: $average
+done
+
+
+echo Calculating overall average miss rate...
+
+total=0
+
+for i in $(cat $1 | awk '{print $6 "/" $8}'); do echo $i | bc -l >> /tmp/dnlcaverages$1.txt; done
+
+for i in `cat /tmp/dnlcaverages$1.txt`
+do
+	total=$(echo $total+$i | bc -l)
+done
+
+numlines=`cat /tmp/dnlcaverages$1.txt | wc -l`
+
+echo $(echo $total/$numlines | bc -l)
+
+rm /tmp/dnlcaverages$1.txt

@@ -1,0 +1,4 @@
+#!/bin/bash
+
+FLAGS=$(echo $* | sed -e 's/ //g')
+echo $FLAGS
